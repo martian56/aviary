@@ -1,0 +1,160 @@
+// The Google Gemini adapter (generateContent). Gemini names things its own
+// way: messages are "contents" with "parts", the assistant role is "model",
+// the system prompt is "systemInstruction", and sampling options live under
+// "generationConfig". The API key rides an x-goog-api-key header.
+
+import std/string
+import std/json { JsonValue, stringify, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply, Usage }
+import "./providers" { Spec, trim_base }
+import "./transport" { post_json }
+import std/error { Error }
+
+fun gemini_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/models/${model}:generateContent"
+    let body = build_body(req)
+    let headers = "Content-Type: application/json\nx-goog-api-key: ${spec.key}"
+    if req.extra_headers != "" {
+        headers = "${headers}\n${req.extra_headers}"
+    }
+    let response = post_json(url, body, headers)?
+    return parse_reply(response)
+}
+
+fun build_body(req: ChatRequest) -> String {
+    let root = Obj.new()
+    let system = ""
+    let contents: List<JsonValue> = []
+    let i = 0
+    while i < req.messages.len() {
+        let m = req.messages[i]
+        match m.role {
+            System -> {
+                if system == "" {
+                    system = m.content
+                } else {
+                    system = "${system}\n${m.content}"
+                }
+            },
+            User -> {
+                contents.push(_content("user", m.content))
+            },
+            Assistant -> {
+                contents.push(_content("model", m.content))
+            },
+            Tool -> {
+                // A tool result is fed back as a user turn; Gemini's native
+                // functionResponse shape is not modeled in this release.
+                contents.push(_content("user", m.content))
+            },
+        }
+        i = i + 1
+    }
+    if system != "" {
+        let parts: List<JsonValue> = [Obj.new().str("text", system).build()]
+        root = root.set("systemInstruction", Obj.new().set("parts", JsonValue.Array(parts)).build())
+    }
+    root.set("contents", JsonValue.Array(contents))
+
+    let gen = Obj.new()
+    let set_gen = false
+    if req.temperature >= 0.0 {
+        gen = gen.float("temperature", req.temperature)
+        set_gen = true
+    }
+    if req.max_tokens > 0 {
+        gen = gen.int("maxOutputTokens", req.max_tokens)
+        set_gen = true
+    }
+    if req.top_p >= 0.0 {
+        gen = gen.float("topP", req.top_p)
+        set_gen = true
+    }
+    if set_gen {
+        root = root.set("generationConfig", gen.build())
+    }
+    if req.tools.len() > 0 {
+        root = root.set("tools", _tools_json(req.tools))
+    }
+    return stringify(root.build())
+}
+
+fun _content(role: String, text: String) -> JsonValue {
+    let parts: List<JsonValue> = [Obj.new().str("text", text).build()]
+    return Obj.new().str("role", role).set("parts", JsonValue.Array(parts)).build()
+}
+
+fun _tools_json(tools: List<ToolDef>) -> JsonValue {
+    let decls: List<JsonValue> = []
+    let i = 0
+    while i < tools.len() {
+        let t = tools[i]
+        decls.push(
+            Obj.new().str("name", t.name).str("description", t.description).set(
+                "parameters",
+                t.parameters,
+            ).build(),
+        )
+        i = i + 1
+    }
+    let one: List<JsonValue> = [
+        Obj.new().set("functionDeclarations", JsonValue.Array(decls)).build(),
+    ]
+    return JsonValue.Array(one)
+}
+
+fun parse_reply(body: String) -> Result<ChatReply, Error> {
+    let j = parse(body)?
+    let candidates = as_list(field(j, "candidates"))
+    if candidates.len() == 0 {
+        return Err(
+            Error { kind: "aviary", message: "gemini response had no candidates: ${_head(body)}" },
+        )
+    }
+    let cand = candidates[0]
+    let parts = as_list(field(field(cand, "content"), "parts"))
+    let text = ""
+    let calls: List<ToolCall> = []
+    let i = 0
+    while i < parts.len() {
+        let p = parts[i]
+        let t = as_str(field(p, "text"))
+        if t != "" {
+            text = "${text}${t}"
+        }
+        let call = field(p, "functionCall")
+        if !call.is_null() {
+            calls.push(
+                ToolCall {
+                    id: "",
+                    name: as_str(field(call, "name")),
+                    arguments: stringify(field(call, "args")),
+                },
+            )
+        }
+        i = i + 1
+    }
+    let usage = field(j, "usageMetadata")
+    let reply = ChatReply {
+        content: text,
+        model: as_str(field(j, "modelVersion")),
+        finish_reason: as_str(field(cand, "finishReason")),
+        tool_calls: calls,
+        usage: Usage {
+            prompt_tokens: as_int_or(field(usage, "promptTokenCount"), 0),
+            completion_tokens: as_int_or(field(usage, "candidatesTokenCount"), 0),
+            total_tokens: as_int_or(field(usage, "totalTokenCount"), 0),
+        },
+        raw: body,
+    }
+    return Ok(reply)
+}
+
+fun _head(body: String) -> String {
+    if body.length() > 300 {
+        return "${body.substring(0, 300)}..."
+    }
+    return body
+}

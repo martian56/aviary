@@ -1,0 +1,122 @@
+// Small helpers over std/json for building request bodies and reading
+// responses without a match at every step. Building uses the Obj builder;
+// reading uses the field / index / as_* accessors, which treat a missing or
+// wrong-typed value as absent rather than an error, so a provider that omits
+// an optional field does not break parsing.
+
+import std/collections
+import std/json { JsonValue }
+
+// The runtime's Int to Float conversion. JSON numbers are Floats in
+// std/json, and a whole-number Float renders without a decimal point, so an
+// Int field such as max_tokens serializes as an integer.
+extern "C" {
+    fun raven_int_to_float(x: Int) -> Float
+}
+
+fun jstr(s: String) -> JsonValue {
+    return JsonValue.Str(s)
+}
+
+fun jint(n: Int) -> JsonValue {
+    return JsonValue.Number(raven_int_to_float(n))
+}
+
+fun jfloat(f: Float) -> JsonValue {
+    return JsonValue.Number(f)
+}
+
+fun jbool(b: Bool) -> JsonValue {
+    return JsonValue.Bool(b)
+}
+
+fun jarr(items: List<JsonValue>) -> JsonValue {
+    return JsonValue.Array(items)
+}
+
+// A JSON object under construction. Each setter returns self so a body can
+// be built in one chain.
+struct Obj {
+    map: Map<String, JsonValue>,
+}
+
+impl Obj {
+    fun new() -> Obj {
+        return Obj { map: Map.new() }
+    }
+
+    fun set(self, key: String, value: JsonValue) -> Obj {
+        self.map.set(key, value)
+        return self
+    }
+
+    fun str(self, key: String, value: String) -> Obj {
+        self.map.set(key, JsonValue.Str(value))
+        return self
+    }
+
+    fun int(self, key: String, value: Int) -> Obj {
+        self.map.set(key, jint(value))
+        return self
+    }
+
+    fun float(self, key: String, value: Float) -> Obj {
+        self.map.set(key, JsonValue.Number(value))
+        return self
+    }
+
+    fun bool(self, key: String, value: Bool) -> Obj {
+        self.map.set(key, JsonValue.Bool(value))
+        return self
+    }
+
+    fun build(self) -> JsonValue {
+        return JsonValue.Object(self.map)
+    }
+}
+
+// The value at object key `key`, or Null when absent or not an object.
+fun field(j: JsonValue, key: String) -> JsonValue {
+    return match j.get(key) {
+        Some(v) -> v,
+        None -> JsonValue.Null,
+    }
+}
+
+// The value at array index `i`, or Null when absent or not an array.
+fun index(j: JsonValue, i: Int) -> JsonValue {
+    return match j.at(i) {
+        Some(v) -> v,
+        None -> JsonValue.Null,
+    }
+}
+
+// `j` as a string, or "" when it is not one.
+fun as_str(j: JsonValue) -> String {
+    return match j.as_string() {
+        Some(s) -> s,
+        None -> "",
+    }
+}
+
+// `j` as an Int, or `default` when it is not a number.
+fun as_int_or(j: JsonValue, default: Int) -> Int {
+    return match j.as_int() {
+        Some(n) -> n,
+        None -> default,
+    }
+}
+
+// `j` as a list, or an empty list when it is not an array.
+fun as_list(j: JsonValue) -> List<JsonValue> {
+    let empty: List<JsonValue> = []
+    return match j {
+        Array(items) -> items,
+        _ -> empty,
+    }
+}
+
+// True when `j` is JSON null or absent.
+fun is_null(j: JsonValue) -> Bool {
+    return j.is_null()
+}

@@ -1,0 +1,115 @@
+// The Cohere Chat adapter (/v2/chat). Cohere v2 takes an OpenAI-style
+// messages array, so the request is close to the OpenAI shape; the reply
+// wraps its text in a content-block array under a top-level "message".
+
+import std/string
+import std/json { JsonValue, stringify, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, role_str, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply, Usage }
+import "./providers" { Spec, trim_base }
+import "./transport" { post_json }
+import std/error { Error }
+
+fun cohere_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/chat"
+    let body = build_body(model, req)
+    let headers = "Content-Type: application/json\nAuthorization: Bearer ${spec.key}"
+    if req.extra_headers != "" {
+        headers = "${headers}\n${req.extra_headers}"
+    }
+    let response = post_json(url, body, headers)?
+    return parse_reply(response)
+}
+
+fun build_body(model: String, req: ChatRequest) -> String {
+    let root = Obj.new()
+    root.str("model", model)
+
+    let msgs: List<JsonValue> = []
+    let i = 0
+    while i < req.messages.len() {
+        let m = req.messages[i]
+        let role = role_str(m.role)
+        // Cohere calls a tool result "tool"; the content is the tool output.
+        msgs.push(Obj.new().str("role", role).str("content", m.content).build())
+        i = i + 1
+    }
+    root.set("messages", JsonValue.Array(msgs))
+
+    if req.temperature >= 0.0 {
+        root = root.float("temperature", req.temperature)
+    }
+    if req.max_tokens > 0 {
+        root = root.int("max_tokens", req.max_tokens)
+    }
+    if req.top_p >= 0.0 {
+        root = root.float("p", req.top_p)
+    }
+    if req.tools.len() > 0 {
+        root = root.set("tools", _tools_json(req.tools))
+    }
+    return stringify(root.build())
+}
+
+fun _tools_json(tools: List<ToolDef>) -> JsonValue {
+    let out: List<JsonValue> = []
+    let i = 0
+    while i < tools.len() {
+        let t = tools[i]
+        let fn = Obj.new().str("name", t.name).str("description", t.description).set(
+            "parameters",
+            t.parameters,
+        )
+        out.push(Obj.new().str("type", "function").set("function", fn.build()).build())
+        i = i + 1
+    }
+    return JsonValue.Array(out)
+}
+
+fun parse_reply(body: String) -> Result<ChatReply, Error> {
+    let j = parse(body)?
+    let message = field(j, "message")
+    let blocks = as_list(field(message, "content"))
+    let text = ""
+    let i = 0
+    while i < blocks.len() {
+        let b = blocks[i]
+        if as_str(field(b, "type")) == "text" {
+            text = "${text}${as_str(field(b, "text"))}"
+        }
+        i = i + 1
+    }
+    let calls: List<ToolCall> = []
+    let raw_calls = as_list(field(message, "tool_calls"))
+    let k = 0
+    while k < raw_calls.len() {
+        let c = raw_calls[k]
+        let fn = field(c, "function")
+        calls.push(
+            ToolCall {
+                id: as_str(field(c, "id")),
+                name: as_str(field(fn, "name")),
+                arguments: as_str(field(fn, "arguments")),
+            },
+        )
+        k = k + 1
+    }
+    // Cohere reports usage under usage.tokens (or billed_units).
+    let tokens = field(field(j, "usage"), "tokens")
+    let input_tokens = as_int_or(field(tokens, "input_tokens"), 0)
+    let output_tokens = as_int_or(field(tokens, "output_tokens"), 0)
+    let reply = ChatReply {
+        content: text,
+        model: as_str(field(j, "model")),
+        finish_reason: as_str(field(j, "finish_reason")),
+        tool_calls: calls,
+        usage: Usage {
+            prompt_tokens: input_tokens,
+            completion_tokens: output_tokens,
+            total_tokens: input_tokens + output_tokens,
+        },
+        raw: body,
+    }
+    return Ok(reply)
+}

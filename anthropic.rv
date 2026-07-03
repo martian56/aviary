@@ -1,0 +1,189 @@
+// The Anthropic Messages adapter (/v1/messages). It differs from the OpenAI
+// shape in three ways this handles: the system prompt is a top-level field,
+// max_tokens is required, and tool calls and results are content blocks
+// rather than separate fields.
+
+import std/string
+import std/json { JsonValue, stringify, parse }
+import "./jsonutil" { Obj, jstr, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply, Usage }
+import "./providers" { Spec, trim_base }
+import "./transport" { post_json }
+import std/error { Error }
+
+// Anthropic requires max_tokens; use this when the caller did not set one.
+const DEFAULT_MAX_TOKENS: Int = 1024
+
+fun anthropic_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/messages"
+    let body = build_body(model, req)
+    let headers = "Content-Type: application/json\nx-api-key: ${spec.key}\nanthropic-version: 2023-06-01"
+    if req.extra_headers != "" {
+        headers = "${headers}\n${req.extra_headers}"
+    }
+    let response = post_json(url, body, headers)?
+    return parse_reply(response)
+}
+
+// A system prompt pulled out of the message list, plus the remaining
+// messages in Anthropic's shape. Raven has no tuples, so the pass returns
+// this small struct.
+struct Split {
+    system: String,
+    messages: List<JsonValue>,
+}
+
+fun build_body(model: String, req: ChatRequest) -> String {
+    let split = _split_messages(req.messages)
+    let root = Obj.new()
+    root.str("model", model)
+
+    let max = req.max_tokens
+    if max <= 0 {
+        max = DEFAULT_MAX_TOKENS
+    }
+    root.int("max_tokens", max)
+
+    if split.system != "" {
+        root = root.str("system", split.system)
+    }
+    root.set("messages", JsonValue.Array(split.messages))
+
+    if req.temperature >= 0.0 {
+        root = root.float("temperature", req.temperature)
+    }
+    if req.top_p >= 0.0 {
+        root = root.float("top_p", req.top_p)
+    }
+    if req.tools.len() > 0 {
+        root = root.set("tools", _tools_json(req.tools))
+    }
+    return stringify(root.build())
+}
+
+fun _split_messages(messages: List<Message>) -> Split {
+    let system = ""
+    let out: List<JsonValue> = []
+    let i = 0
+    while i < messages.len() {
+        let m = messages[i]
+        match m.role {
+            System -> {
+                if system == "" {
+                    system = m.content
+                } else {
+                    system = "${system}\n${m.content}"
+                }
+            },
+            User -> {
+                out.push(Obj.new().str("role", "user").str("content", m.content).build())
+            },
+            Assistant -> {
+                out.push(_assistant_json(m))
+            },
+            Tool -> {
+                out.push(_tool_result_json(m))
+            },
+        }
+        i = i + 1
+    }
+    return Split { system, messages: out }
+}
+
+fun _assistant_json(m: Message) -> JsonValue {
+    if m.tool_calls.len() == 0 {
+        return Obj.new().str("role", "assistant").str("content", m.content).build()
+    }
+    let blocks: List<JsonValue> = []
+    if m.content != "" {
+        blocks.push(Obj.new().str("type", "text").str("text", m.content).build())
+    }
+    let i = 0
+    while i < m.tool_calls.len() {
+        let c = m.tool_calls[i]
+        blocks.push(
+            Obj.new().str("type", "tool_use").str("id", c.id).str("name", c.name).set(
+                "input",
+                _parse_args(c.arguments),
+            ).build(),
+        )
+        i = i + 1
+    }
+    return Obj.new().str("role", "assistant").set("content", JsonValue.Array(blocks)).build()
+}
+
+fun _tool_result_json(m: Message) -> JsonValue {
+    let block = Obj.new().str("type", "tool_result").str("tool_use_id", m.tool_call_id).str(
+        "content",
+        m.content,
+    ).build()
+    let blocks: List<JsonValue> = [block]
+    return Obj.new().str("role", "user").set("content", JsonValue.Array(blocks)).build()
+}
+
+fun _tools_json(tools: List<ToolDef>) -> JsonValue {
+    let out: List<JsonValue> = []
+    let i = 0
+    while i < tools.len() {
+        let t = tools[i]
+        out.push(
+            Obj.new().str("name", t.name).str("description", t.description).set(
+                "input_schema",
+                t.parameters,
+            ).build(),
+        )
+        i = i + 1
+    }
+    return JsonValue.Array(out)
+}
+
+// Parse a raw JSON argument string into a value, falling back to an empty
+// object when it is not valid JSON.
+fun _parse_args(raw: String) -> JsonValue {
+    return match parse(raw) {
+        Ok(v) -> v,
+        Err(e) -> Obj.new().build(),
+    }
+}
+
+fun parse_reply(body: String) -> Result<ChatReply, Error> {
+    let j = parse(body)?
+    let blocks = as_list(field(j, "content"))
+    let text = ""
+    let calls: List<ToolCall> = []
+    let i = 0
+    while i < blocks.len() {
+        let b = blocks[i]
+        let kind = as_str(field(b, "type"))
+        if kind == "text" {
+            text = "${text}${as_str(field(b, "text"))}"
+        }
+        if kind == "tool_use" {
+            calls.push(
+                ToolCall {
+                    id: as_str(field(b, "id")),
+                    name: as_str(field(b, "name")),
+                    arguments: stringify(field(b, "input")),
+                },
+            )
+        }
+        i = i + 1
+    }
+    let usage = field(j, "usage")
+    let input_tokens = as_int_or(field(usage, "input_tokens"), 0)
+    let output_tokens = as_int_or(field(usage, "output_tokens"), 0)
+    let reply = ChatReply {
+        content: text,
+        model: as_str(field(j, "model")),
+        finish_reason: as_str(field(j, "stop_reason")),
+        tool_calls: calls,
+        usage: Usage {
+            prompt_tokens: input_tokens,
+            completion_tokens: output_tokens,
+            total_tokens: input_tokens + output_tokens,
+        },
+        raw: body,
+    }
+    return Ok(reply)
+}

@@ -1,0 +1,57 @@
+import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
+import std/json { JsonValue, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply }
+import "./cohere" { build_body, parse_reply }
+
+fun must_parse(s: String) -> JsonValue {
+    return match parse(s) {
+        Ok(v) -> v,
+        Err(e) -> {
+            assert_true(false)
+            JsonValue.Null
+        },
+    }
+}
+
+fun test_messages_are_openai_style() {
+    let req = ChatRequest.new("cohere/command-r").system("be brief").user("hi")
+    let j = must_parse(build_body("command-r", req))
+    assert_eq_str(as_str(field(j, "model")), "command-r")
+    let msgs = as_list(field(j, "messages"))
+    assert_eq_int(msgs.len(), 2)
+    assert_eq_str(as_str(field(msgs[0], "role")), "system")
+    assert_eq_str(as_str(field(msgs[1], "content")), "hi")
+}
+
+fun test_top_p_maps_to_p() {
+    let req = ChatRequest.new("cohere/command-r").user("hi").top_p(0.8)
+    let j = must_parse(build_body("command-r", req))
+    assert_false(field(j, "p").is_null())
+}
+
+fun test_parse_text_reply() {
+    let body = "{\"model\":\"command-r\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Hello\"}]},\"finish_reason\":\"COMPLETE\",\"usage\":{\"tokens\":{\"input_tokens\":7,\"output_tokens\":2}}}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "Hello")
+            assert_eq_str(r.finish_reason, "COMPLETE")
+            assert_eq_int(r.usage.prompt_tokens, 7)
+            assert_eq_int(r.usage.total_tokens, 9)
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
+fun test_parse_tool_call_reply() {
+    let body = "{\"model\":\"command-r\",\"message\":{\"role\":\"assistant\",\"content\":[],\"tool_calls\":[{\"id\":\"c1\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"NYC\\\"}\"}}]},\"finish_reason\":\"TOOL_CALL\"}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_int(r.tool_calls.len(), 1)
+            assert_eq_str(r.tool_calls[0].name, "get_weather")
+            assert_true(r.tool_calls[0].arguments.contains("NYC"))
+        },
+        Err(e) -> assert_true(false),
+    }
+}

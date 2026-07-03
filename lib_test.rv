@@ -1,0 +1,55 @@
+import std/test { assert_eq_str, assert_true, assert_err }
+import "./request" { ChatRequest }
+import "./lib" { complete, ask }
+
+// complete and ask make a network call, so the tests here exercise the
+// routing and validation that happen before that, which is where the bugs
+// live. A model without a provider prefix, or an unknown provider, must fail
+// fast with a clear message and never touch the network.
+
+fun test_model_without_provider_is_rejected() {
+    match complete(ChatRequest.new("gpt-4o").user("hi")) {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(e.message.contains("provider/model")),
+    }
+}
+
+fun test_empty_provider_is_rejected() {
+    match complete(ChatRequest.new("/gpt-4o").user("hi")) {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(e.message.contains("provider/model")),
+    }
+}
+
+fun test_empty_model_is_rejected() {
+    match complete(ChatRequest.new("openai/").user("hi")) {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(e.message.contains("provider/model")),
+    }
+}
+
+fun test_unknown_provider_is_rejected() {
+    match complete(ChatRequest.new("acme/model").user("hi")) {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(e.message.contains("unknown provider")),
+    }
+}
+
+fun test_unresolvable_base_is_reported_before_any_call() {
+    // The custom provider needs a base URL. With no .base(...) and no
+    // AVIARY_BASE_URL set, resolution fails before any request, so the test
+    // never touches the network.
+    match complete(ChatRequest.new("custom/some-model").user("hi")) {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(e.message.contains("base URL")),
+    }
+}
+
+fun test_ask_builds_a_single_user_turn() {
+    // ask with an unroutable model still fails at routing, proving it built a
+    // request and dispatched it through complete.
+    match ask("nope/x", "hi") {
+        Ok(s) -> assert_true(false),
+        Err(e) -> assert_true(e.message.contains("unknown provider")),
+    }
+}

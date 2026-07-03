@@ -1,0 +1,60 @@
+// aviary: one chat-completion API across many LLM providers.
+//
+//     import "github.com/martian56/aviary" { ChatRequest, complete }
+//
+//     let reply = complete(
+//         ChatRequest.new("openai/gpt-4o-mini")
+//             .system("You are terse.")
+//             .user("Name three birds.")
+//     )
+//     match reply {
+//         Ok(r) -> print(r.content),
+//         Err(e) -> print(e.message),
+//     }
+//
+// The model string is "provider/model". The provider selects the endpoint,
+// the credential (from its environment variable unless overridden), and the
+// wire format; OpenAI, Groq, Mistral, DeepSeek, xAI, Together, Fireworks,
+// Perplexity, OpenRouter, Azure, Ollama, and other OpenAI-compatible
+// services share one path, while Anthropic, Gemini, and Cohere have native
+// adapters. See the README for the full list and the environment variables.
+
+import std/string
+import std/error { Error, error }
+import "./message" { Message, Role, role_str, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply, Usage }
+import "./providers" { ProviderKind, Spec, resolve }
+import "./openai_compat" { openai_complete }
+import "./anthropic" { anthropic_complete }
+import "./gemini" { gemini_complete }
+import "./cohere" { cohere_complete }
+
+// Send a chat request and get one reply. Routing, credential resolution, the
+// HTTP call, and response parsing all happen here; the caller sees a neutral
+// ChatReply or an Error.
+fun complete(req: ChatRequest) -> Result<ChatReply, Error> {
+    let slash = req.model.index_of("/")
+    if slash < 0 {
+        return Err(error("model must be 'provider/model', got '${req.model}'"))
+    }
+    let provider = req.model.substring(0, slash)
+    let model = req.model.substring(slash + 1, req.model.length())
+    if provider == "" || model == "" {
+        return Err(error("model must be 'provider/model', got '${req.model}'"))
+    }
+    let spec = resolve(provider, req.api_key, req.base_url)?
+    return match spec.kind {
+        OpenAI -> openai_complete(model, req, spec),
+        Anthropic -> anthropic_complete(model, req, spec),
+        Gemini -> gemini_complete(model, req, spec),
+        Cohere -> cohere_complete(model, req, spec),
+    }
+}
+
+// A one-shot text completion: a single user prompt, the reply's text, or the
+// error message. Convenient when there is no system prompt, no history, and
+// no tools.
+fun ask(model: String, prompt: String) -> Result<String, Error> {
+    let reply = complete(ChatRequest.new(model).user(prompt))?
+    return Ok(reply.content)
+}

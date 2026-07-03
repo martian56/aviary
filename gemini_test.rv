@@ -1,0 +1,93 @@
+import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
+import std/json { JsonValue, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply }
+import "./gemini" { build_body, parse_reply }
+
+fun must_parse(s: String) -> JsonValue {
+    return match parse(s) {
+        Ok(v) -> v,
+        Err(e) -> {
+            assert_true(false)
+            JsonValue.Null
+        },
+    }
+}
+
+fun test_contents_and_roles() {
+    let req = ChatRequest.new("gemini/x").user("hi").assistant("hello")
+    let j = must_parse(build_body(req))
+    let contents = as_list(field(j, "contents"))
+    assert_eq_int(contents.len(), 2)
+    assert_eq_str(as_str(field(contents[0], "role")), "user")
+    // Assistant maps to Gemini's "model" role.
+    assert_eq_str(as_str(field(contents[1], "role")), "model")
+    let parts = as_list(field(contents[0], "parts"))
+    assert_eq_str(as_str(field(parts[0], "text")), "hi")
+}
+
+fun test_system_instruction() {
+    let req = ChatRequest.new("gemini/x").system("be brief").user("hi")
+    let j = must_parse(build_body(req))
+    let parts = as_list(field(field(j, "systemInstruction"), "parts"))
+    assert_eq_str(as_str(field(parts[0], "text")), "be brief")
+    // The system turn is not also in contents.
+    assert_eq_int(as_list(field(j, "contents")).len(), 1)
+}
+
+fun test_generation_config() {
+    let req = ChatRequest.new("gemini/x").user("hi").temperature(0.3).max_tokens(256)
+    let j = must_parse(build_body(req))
+    let gen = field(j, "generationConfig")
+    assert_false(gen.is_null())
+    assert_eq_int(as_int_or(field(gen, "maxOutputTokens"), 0), 256)
+}
+
+fun test_no_generation_config_when_unset() {
+    let req = ChatRequest.new("gemini/x").user("hi")
+    let j = must_parse(build_body(req))
+    assert_true(field(j, "generationConfig").is_null())
+}
+
+fun test_tools_are_function_declarations() {
+    let req = ChatRequest.new("gemini/x").user("weather?").tool(
+        ToolDef.new("get_weather", "weather", Obj.new().str("type", "object").build()),
+    )
+    let j = must_parse(build_body(req))
+    let tools = as_list(field(j, "tools"))
+    let decls = as_list(field(tools[0], "functionDeclarations"))
+    assert_eq_int(decls.len(), 1)
+    assert_eq_str(as_str(field(decls[0], "name")), "get_weather")
+}
+
+fun test_parse_text_reply() {
+    let body = "{\"modelVersion\":\"gemini-1.5\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Sure.\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":6,\"candidatesTokenCount\":2,\"totalTokenCount\":8}}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "Sure.")
+            assert_eq_str(r.finish_reason, "STOP")
+            assert_eq_int(r.usage.total_tokens, 8)
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
+fun test_parse_function_call_reply() {
+    let body = "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"NYC\"}}}]},\"finishReason\":\"STOP\"}]}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_int(r.tool_calls.len(), 1)
+            assert_eq_str(r.tool_calls[0].name, "get_weather")
+            assert_true(r.tool_calls[0].arguments.contains("NYC"))
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
+fun test_parse_reply_without_candidates_errors() {
+    match parse_reply("{\"error\":\"bad\"}") {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(true),
+    }
+}

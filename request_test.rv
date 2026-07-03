@@ -1,0 +1,52 @@
+import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
+import "./message" { Message, Role, ToolCall }
+import "./request" { ChatRequest, ChatReply, Usage }
+
+fun role_str(r: Role) -> String {
+    return match r {
+        System -> "system",
+        User -> "user",
+        Assistant -> "assistant",
+        Tool -> "tool",
+    }
+}
+
+fun test_new_request_has_unset_sentinels() {
+    let req = ChatRequest.new("openai/gpt-4o")
+    assert_true(req.temperature < 0.0)
+    assert_eq_int(req.max_tokens, 0)
+    assert_true(req.top_p < 0.0)
+    assert_eq_int(req.messages.len(), 0)
+    assert_eq_str(req.api_key, "")
+}
+
+fun test_builder_appends_messages_in_order() {
+    let req = ChatRequest.new("openai/gpt-4o").system("s").user("u").assistant("a")
+    assert_eq_int(req.messages.len(), 3)
+    assert_eq_str(role_str(req.messages[0].role), "system")
+    assert_eq_str(role_str(req.messages[1].role), "user")
+    assert_eq_str(role_str(req.messages[2].role), "assistant")
+}
+
+fun test_option_setters() {
+    let req = ChatRequest.new("openai/gpt-4o").temperature(0.7).max_tokens(200).top_p(0.95).key("k").base(
+        "b",
+    )
+    assert_true(req.temperature > 0.6)
+    assert_eq_int(req.max_tokens, 200)
+    assert_eq_str(req.api_key, "k")
+    assert_eq_str(req.base_url, "b")
+}
+
+fun test_header_chaining_joins_lines() {
+    let req = ChatRequest.new("openai/gpt-4o").header("X-A: 1").header("X-B: 2")
+    assert_eq_str(req.extra_headers, "X-A: 1\nX-B: 2")
+}
+
+fun test_message_constructors() {
+    let tool = Message.tool_result("call_1", "get_weather", "72F")
+    assert_eq_str(role_str(tool.role), "tool")
+    assert_eq_str(tool.tool_call_id, "call_1")
+    assert_eq_str(tool.name, "get_weather")
+    assert_eq_str(tool.content, "72F")
+}

@@ -1,0 +1,106 @@
+import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
+import std/json { JsonValue, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply }
+import "./anthropic" { build_body, parse_reply }
+
+fun must_parse(s: String) -> JsonValue {
+    return match parse(s) {
+        Ok(v) -> v,
+        Err(e) -> {
+            assert_true(false)
+            JsonValue.Null
+        },
+    }
+}
+
+fun test_system_is_hoisted_out_of_messages() {
+    let req = ChatRequest.new("anthropic/claude").system("be terse").user("hi")
+    let j = must_parse(build_body("claude-3-5-sonnet-latest", req))
+    assert_eq_str(as_str(field(j, "system")), "be terse")
+    let msgs = as_list(field(j, "messages"))
+    assert_eq_int(msgs.len(), 1)
+    assert_eq_str(as_str(field(msgs[0], "role")), "user")
+}
+
+fun test_max_tokens_defaults_when_unset() {
+    let req = ChatRequest.new("anthropic/claude").user("hi")
+    let j = must_parse(build_body("claude", req))
+    assert_eq_int(as_int_or(field(j, "max_tokens"), 0), 1024)
+}
+
+fun test_max_tokens_honors_the_request() {
+    let req = ChatRequest.new("anthropic/claude").user("hi").max_tokens(500)
+    let j = must_parse(build_body("claude", req))
+    assert_eq_int(as_int_or(field(j, "max_tokens"), 0), 500)
+}
+
+fun test_tool_use_is_a_content_block() {
+    let call = ToolCall { id: "tu_1", name: "get_weather", arguments: "{\"city\":\"NYC\"}" }
+    let req = ChatRequest.new("anthropic/claude").user("weather?").message(
+        Message.assistant_calls("let me check", [call]),
+    )
+    let j = must_parse(build_body("claude", req))
+    let msgs = as_list(field(j, "messages"))
+    let blocks = as_list(field(msgs[1], "content"))
+    // A text block then a tool_use block.
+    assert_eq_int(blocks.len(), 2)
+    assert_eq_str(as_str(field(blocks[0], "type")), "text")
+    assert_eq_str(as_str(field(blocks[1], "type")), "tool_use")
+    assert_eq_str(as_str(field(blocks[1], "name")), "get_weather")
+    // arguments were parsed into an object, so city is readable.
+    assert_eq_str(as_str(field(field(blocks[1], "input"), "city")), "NYC")
+}
+
+fun test_tool_result_becomes_a_user_block() {
+    let req = ChatRequest.new("anthropic/claude").message(
+        Message.tool_result("tu_1", "get_weather", "72F"),
+    )
+    let j = must_parse(build_body("claude", req))
+    let msgs = as_list(field(j, "messages"))
+    assert_eq_str(as_str(field(msgs[0], "role")), "user")
+    let blocks = as_list(field(msgs[0], "content"))
+    assert_eq_str(as_str(field(blocks[0], "type")), "tool_result")
+    assert_eq_str(as_str(field(blocks[0], "tool_use_id")), "tu_1")
+}
+
+fun test_tools_use_input_schema() {
+    let req = ChatRequest.new("anthropic/claude").user("weather?").tool(
+        ToolDef.new("get_weather", "weather", Obj.new().str("type", "object").build()),
+    )
+    let j = must_parse(build_body("claude", req))
+    let tools = as_list(field(j, "tools"))
+    assert_eq_int(tools.len(), 1)
+    assert_eq_str(as_str(field(tools[0], "name")), "get_weather")
+    assert_false(field(tools[0], "input_schema").is_null())
+}
+
+fun test_parse_text_reply() {
+    let body = "{\"model\":\"claude-3-5-sonnet\",\"content\":[{\"type\":\"text\",\"text\":\"Hi there\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"output_tokens\":4}}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "Hi there")
+            assert_eq_str(r.finish_reason, "end_turn")
+            assert_eq_int(r.usage.prompt_tokens, 10)
+            assert_eq_int(r.usage.completion_tokens, 4)
+            assert_eq_int(r.usage.total_tokens, 14)
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
+fun test_parse_tool_use_reply() {
+    let body = "{\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"checking\"},{\"type\":\"tool_use\",\"id\":\"tu_9\",\"name\":\"get_weather\",\"input\":{\"city\":\"NYC\"}}],\"stop_reason\":\"tool_use\"}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "checking")
+            assert_eq_str(r.finish_reason, "tool_use")
+            assert_eq_int(r.tool_calls.len(), 1)
+            assert_eq_str(r.tool_calls[0].id, "tu_9")
+            assert_eq_str(r.tool_calls[0].name, "get_weather")
+            assert_true(r.tool_calls[0].arguments.contains("NYC"))
+        },
+        Err(e) -> assert_true(false),
+    }
+}

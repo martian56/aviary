@@ -1,0 +1,127 @@
+import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
+import std/json { JsonValue, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply }
+import "./openai_compat" { build_body, parse_reply }
+
+fun must_parse(s: String) -> JsonValue {
+    return match parse(s) {
+        Ok(v) -> v,
+        Err(e) -> {
+            assert_true(false)
+            JsonValue.Null
+        },
+    }
+}
+
+fun schema() -> JsonValue {
+    return Obj.new().str("type", "object").build()
+}
+
+fun test_body_has_model_and_messages() {
+    let req = ChatRequest.new("openai/gpt-4o").system("be nice").user("hi")
+    let j = must_parse(build_body("gpt-4o", req))
+    assert_eq_str(as_str(field(j, "model")), "gpt-4o")
+    let msgs = as_list(field(j, "messages"))
+    assert_eq_int(msgs.len(), 2)
+    assert_eq_str(as_str(field(msgs[0], "role")), "system")
+    assert_eq_str(as_str(field(msgs[0], "content")), "be nice")
+    assert_eq_str(as_str(field(msgs[1], "role")), "user")
+    assert_eq_str(as_str(field(msgs[1], "content")), "hi")
+}
+
+fun test_body_includes_set_options() {
+    let req = ChatRequest.new("openai/gpt-4o").user("hi").temperature(0.5).max_tokens(128).top_p(
+        0.9,
+    )
+    let j = must_parse(build_body("gpt-4o", req))
+    assert_false(field(j, "temperature").is_null())
+    assert_eq_int(as_int_or(field(j, "max_tokens"), 0), 128)
+    assert_false(field(j, "top_p").is_null())
+}
+
+fun test_body_omits_unset_options() {
+    let req = ChatRequest.new("openai/gpt-4o").user("hi")
+    let j = must_parse(build_body("gpt-4o", req))
+    assert_true(field(j, "temperature").is_null())
+    assert_true(field(j, "max_tokens").is_null())
+    assert_true(field(j, "top_p").is_null())
+    assert_true(field(j, "tools").is_null())
+}
+
+fun test_body_serializes_tools() {
+    let req = ChatRequest.new("openai/gpt-4o").user("weather?").tool(
+        ToolDef.new("get_weather", "look up weather", schema()),
+    )
+    let j = must_parse(build_body("gpt-4o", req))
+    let tools = as_list(field(j, "tools"))
+    assert_eq_int(tools.len(), 1)
+    assert_eq_str(as_str(field(tools[0], "type")), "function")
+    let fn = field(tools[0], "function")
+    assert_eq_str(as_str(field(fn, "name")), "get_weather")
+    assert_eq_str(as_str(field(fn, "description")), "look up weather")
+}
+
+fun test_body_serializes_assistant_tool_calls() {
+    let call = ToolCall { id: "call_1", name: "get_weather", arguments: "{\"city\":\"NYC\"}" }
+    let req = ChatRequest.new("openai/gpt-4o").user("weather?").message(
+        Message.assistant_calls("", [call]),
+    )
+    let j = must_parse(build_body("gpt-4o", req))
+    let msgs = as_list(field(j, "messages"))
+    let assistant = msgs[1]
+    let calls = as_list(field(assistant, "tool_calls"))
+    assert_eq_int(calls.len(), 1)
+    assert_eq_str(as_str(field(calls[0], "id")), "call_1")
+    assert_eq_str(as_str(field(field(calls[0], "function"), "name")), "get_weather")
+}
+
+fun test_body_tool_result_carries_id() {
+    let req = ChatRequest.new("openai/gpt-4o").message(
+        Message.tool_result("call_1", "get_weather", "72F"),
+    )
+    let j = must_parse(build_body("gpt-4o", req))
+    let msgs = as_list(field(j, "messages"))
+    assert_eq_str(as_str(field(msgs[0], "role")), "tool")
+    assert_eq_str(as_str(field(msgs[0], "tool_call_id")), "call_1")
+    assert_eq_str(as_str(field(msgs[0], "content")), "72F")
+}
+
+fun test_parse_text_reply() {
+    let body = "{\"model\":\"gpt-4o\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello there\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3,\"total_tokens\":8}}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "Hello there")
+            assert_eq_str(r.model, "gpt-4o")
+            assert_eq_str(r.finish_reason, "stop")
+            assert_eq_int(r.usage.prompt_tokens, 5)
+            assert_eq_int(r.usage.total_tokens, 8)
+            assert_eq_int(r.tool_calls.len(), 0)
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
+fun test_parse_tool_call_reply() {
+    let body = "{\"model\":\"gpt-4o\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"NYC\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "")
+            assert_eq_str(r.finish_reason, "tool_calls")
+            assert_eq_int(r.tool_calls.len(), 1)
+            assert_eq_str(r.tool_calls[0].id, "call_9")
+            assert_eq_str(r.tool_calls[0].name, "get_weather")
+            assert_true(r.tool_calls[0].arguments.contains("NYC"))
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
+fun test_parse_reply_without_choices_errors() {
+    let body = "{\"error\":{\"message\":\"bad key\"}}"
+    match parse_reply(body) {
+        Ok(r) -> assert_true(false),
+        Err(e) -> assert_true(true),
+    }
+}

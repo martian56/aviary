@@ -1,0 +1,118 @@
+// The request a caller builds and the reply it gets back, both neutral
+// across providers. A ChatRequest is a builder: unset numeric options carry a
+// sentinel (a negative temperature or top_p, a zero max_tokens) so an adapter
+// includes only the fields the caller actually set.
+
+import "./message" { Message, Role, ToolCall, ToolDef }
+
+// Token counts from the provider. A provider that omits a count leaves it 0.
+struct Usage {
+    prompt_tokens: Int,
+    completion_tokens: Int,
+    total_tokens: Int,
+}
+
+// A model's reply. `content` is the text; `tool_calls` is non-empty when the
+// model asked to call tools instead of (or alongside) answering. `raw` is the
+// provider's untouched JSON response, for anything the neutral shape omits.
+struct ChatReply {
+    content: String,
+    model: String,
+    finish_reason: String,
+    tool_calls: List<ToolCall>,
+    usage: Usage,
+    raw: String,
+}
+
+struct ChatRequest {
+    // "provider/model", for example "openai/gpt-4o" or "anthropic/claude-3-5-sonnet-latest".
+    model: String,
+    messages: List<Message>,
+    temperature: Float,
+    max_tokens: Int,
+    top_p: Float,
+    tools: List<ToolDef>,
+    // Overrides. An empty api_key falls back to the provider's env var; an
+    // empty base_url falls back to the provider's default endpoint.
+    api_key: String,
+    base_url: String,
+    // Extra request header lines ("Key: Value"), joined onto the defaults.
+    extra_headers: String,
+}
+
+impl ChatRequest {
+    fun new(model: String) -> ChatRequest {
+        let msgs: List<Message> = []
+        let tools: List<ToolDef> = []
+        return ChatRequest {
+            model,
+            messages: msgs,
+            temperature: 0.0 - 1.0,
+            max_tokens: 0,
+            top_p: 0.0 - 1.0,
+            tools,
+            api_key: "",
+            base_url: "",
+            extra_headers: "",
+        }
+    }
+
+    fun message(self, m: Message) -> ChatRequest {
+        self.messages.push(m)
+        return self
+    }
+
+    fun system(self, text: String) -> ChatRequest {
+        self.messages.push(Message.system(text))
+        return self
+    }
+
+    fun user(self, text: String) -> ChatRequest {
+        self.messages.push(Message.user(text))
+        return self
+    }
+
+    fun assistant(self, text: String) -> ChatRequest {
+        self.messages.push(Message.assistant(text))
+        return self
+    }
+
+    fun temperature(self, t: Float) -> ChatRequest {
+        self.temperature = t
+        return self
+    }
+
+    fun max_tokens(self, n: Int) -> ChatRequest {
+        self.max_tokens = n
+        return self
+    }
+
+    fun top_p(self, p: Float) -> ChatRequest {
+        self.top_p = p
+        return self
+    }
+
+    fun tool(self, t: ToolDef) -> ChatRequest {
+        self.tools.push(t)
+        return self
+    }
+
+    fun key(self, k: String) -> ChatRequest {
+        self.api_key = k
+        return self
+    }
+
+    fun base(self, url: String) -> ChatRequest {
+        self.base_url = url
+        return self
+    }
+
+    fun header(self, line: String) -> ChatRequest {
+        if self.extra_headers == "" {
+            self.extra_headers = line
+        } else {
+            self.extra_headers = "${self.extra_headers}\n${line}"
+        }
+        return self
+    }
+}

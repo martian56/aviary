@@ -1,0 +1,47 @@
+import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
+import std/json { JsonValue, parse, stringify }
+import "./jsonutil" { Obj, jstr, jint, jbool, jarr, field, index, as_str, as_int_or, as_list, is_null }
+
+fun test_obj_builds_an_object() {
+    let o = Obj.new().str("name", "raven").int("count", 3).bool("ok", true).build()
+    assert_eq_str(as_str(field(o, "name")), "raven")
+    assert_eq_int(as_int_or(field(o, "count"), 0), 3)
+}
+
+fun test_int_serializes_without_a_decimal_point() {
+    let o = Obj.new().int("n", 1000).build()
+    assert_true(stringify(o).contains("1000"))
+    assert_false(stringify(o).contains("1000.0"))
+}
+
+fun test_field_of_missing_key_is_null() {
+    let o = Obj.new().str("a", "1").build()
+    assert_true(is_null(field(o, "missing")))
+}
+
+fun test_field_of_non_object_is_null() {
+    assert_true(is_null(field(JsonValue.Str("x"), "a")))
+}
+
+fun test_index_into_array() {
+    let arr = jarr([jstr("a"), jstr("b")])
+    assert_eq_str(as_str(index(arr, 1)), "b")
+    assert_true(is_null(index(arr, 5)))
+}
+
+fun test_as_list_of_non_array_is_empty() {
+    assert_eq_int(as_list(jstr("x")).len(), 0)
+}
+
+fun test_as_str_of_non_string_is_empty() {
+    assert_eq_str(as_str(jint(5)), "")
+}
+
+fun test_roundtrip_through_json() {
+    let o = Obj.new().str("k", "v").set("nested", Obj.new().int("x", 2).build()).build()
+    let text = stringify(o)
+    match parse(text) {
+        Ok(back) -> assert_eq_int(as_int_or(field(field(back, "nested"), "x"), 0), 2),
+        Err(e) -> assert_true(false),
+    }
+}

@@ -1,0 +1,54 @@
+// A tiny aviary demo. With a key in the environment it makes a real call;
+// without one it prints the request body aviary would send, so it runs
+// anywhere.
+//
+// Run with:  rvpm run
+// Point it elsewhere with:  AVIARY_MODEL=anthropic/claude-3-5-sonnet-latest rvpm run
+
+import std/io { println }
+import std/string
+import std/env { get_env, has_env }
+import "../request" { ChatRequest }
+import "../lib" { complete }
+import "../providers" { resolve }
+import "../openai_compat" { build_body }
+
+fun main() {
+    let model = "openai/gpt-4o-mini"
+    if has_env("AVIARY_MODEL") {
+        model = get_env("AVIARY_MODEL")
+    }
+
+    let req = ChatRequest.new(model).system("You are a concise assistant.").user(
+        "Name three members of the crow family in one line.",
+    ).temperature(0.4).max_tokens(120)
+
+    let slash = model.index_of("/")
+    let provider = ""
+    if slash >= 0 {
+        provider = model.substring(0, slash)
+    }
+    let has_key = has_env("OPENAI_API_KEY") || has_env("ANTHROPIC_API_KEY") || has_env(
+        "GEMINI_API_KEY",
+    )
+
+    if !has_key {
+        println("No API key in the environment, so here is the request aviary would send to ${model}:")
+        println("")
+        println(build_body(model.substring(slash + 1, model.length()), req))
+        println("")
+        println("Set OPENAI_API_KEY (or another provider's key) and run again for a real reply.")
+        return
+    }
+
+    match complete(req) {
+        Ok(reply) -> {
+            println(reply.content)
+            println("")
+            println("[${reply.model} · ${reply.finish_reason} · ${reply.usage.total_tokens} tokens]")
+        },
+        Err(e) -> {
+            println("request failed: ${e.message}")
+        },
+    }
+}

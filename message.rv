@@ -1,0 +1,97 @@
+// Conversation messages and tool definitions. These are provider-neutral;
+// each adapter translates them to and from its own wire shape.
+
+import std/json { JsonValue }
+
+// Who a message is from. Tool is a tool result being fed back to the model.
+enum Role {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+// The wire name for a role, shared by the OpenAI-style adapters.
+fun role_str(r: Role) -> String {
+    return match r {
+        System -> "system",
+        User -> "user",
+        Assistant -> "assistant",
+        Tool -> "tool",
+    }
+}
+
+// A model's request to call a tool. `arguments` is a raw JSON string, as the
+// provider returns it, so the caller parses it against the tool's schema.
+struct ToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+// One conversation turn. `tool_calls` is set on an assistant turn that
+// invokes tools; `tool_call_id` and `name` are set on a Tool turn carrying a
+// result back.
+struct Message {
+    role: Role,
+    content: String,
+    tool_calls: List<ToolCall>,
+    tool_call_id: String,
+    name: String,
+}
+
+impl Message {
+    fun system(text: String) -> Message {
+        return _plain(Role.System, text)
+    }
+
+    fun user(text: String) -> Message {
+        return _plain(Role.User, text)
+    }
+
+    fun assistant(text: String) -> Message {
+        return _plain(Role.Assistant, text)
+    }
+
+    // An assistant turn that requested one or more tool calls.
+    fun assistant_calls(text: String, calls: List<ToolCall>) -> Message {
+        return Message {
+            role: Role.Assistant,
+            content: text,
+            tool_calls: calls,
+            tool_call_id: "",
+            name: "",
+        }
+    }
+
+    // A tool result to feed back, tied to the call it answers.
+    fun tool_result(tool_call_id: String, name: String, content: String) -> Message {
+        let none: List<ToolCall> = []
+        return Message {
+            role: Role.Tool,
+            content,
+            tool_calls: none,
+            tool_call_id,
+            name,
+        }
+    }
+}
+
+fun _plain(role: Role, text: String) -> Message {
+    let none: List<ToolCall> = []
+    return Message { role, content: text, tool_calls: none, tool_call_id: "", name: "" }
+}
+
+// A tool the model may call. `parameters` is a JSON Schema object describing
+// the arguments; build it with jsonutil's Obj or std/json directly.
+struct ToolDef {
+    name: String,
+    description: String,
+    parameters: JsonValue,
+}
+
+impl ToolDef {
+    fun new(name: String, description: String, parameters: JsonValue) -> ToolDef {
+        return ToolDef { name, description, parameters }
+    }
+}

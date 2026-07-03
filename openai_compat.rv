@@ -1,0 +1,166 @@
+// The OpenAI chat-completions adapter. OpenAI, Groq, Mistral, DeepSeek, xAI,
+// Together, Fireworks, Perplexity, OpenRouter, Azure, Ollama, and any other
+// OpenAI-compatible endpoint all share this code; they differ only in the
+// base URL and credential resolved in providers.rv.
+
+import std/string
+import std/json { JsonValue, stringify, parse }
+import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "./message" { Message, Role, role_str, ToolCall, ToolDef }
+import "./request" { ChatRequest, ChatReply, Usage }
+import "./providers" { Spec, Auth, trim_base }
+import "./transport" { post_json }
+import std/error { Error }
+
+// Run a chat completion against an OpenAI-compatible endpoint.
+fun openai_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/chat/completions"
+    let body = build_body(model, req)
+    let headers = _headers(spec, req)
+    let response = post_json(url, body, headers)?
+    return parse_reply(response)
+}
+
+// The request body for /chat/completions. Only the options the caller set are
+// included, so a plain request is a model plus messages.
+fun build_body(model: String, req: ChatRequest) -> String {
+    let root = Obj.new()
+    root.str("model", model)
+
+    let msgs: List<JsonValue> = []
+    let i = 0
+    while i < req.messages.len() {
+        msgs.push(_message_json(req.messages[i]))
+        i = i + 1
+    }
+    root.set("messages", JsonValue.Array(msgs))
+
+    if req.temperature >= 0.0 {
+        root = root.float("temperature", req.temperature)
+    }
+    if req.max_tokens > 0 {
+        root = root.int("max_tokens", req.max_tokens)
+    }
+    if req.top_p >= 0.0 {
+        root = root.float("top_p", req.top_p)
+    }
+    if req.tools.len() > 0 {
+        root = root.set("tools", _tools_json(req.tools))
+    }
+    return stringify(root.build())
+}
+
+fun _message_json(m: Message) -> JsonValue {
+    let o = Obj.new()
+    o = o.str("role", role_str(m.role))
+    o = o.str("content", m.content)
+    match m.role {
+        Tool -> {
+            o = o.str("tool_call_id", m.tool_call_id)
+        },
+        _ -> {},
+    }
+    if m.tool_calls.len() > 0 {
+        let calls: List<JsonValue> = []
+        let i = 0
+        while i < m.tool_calls.len() {
+            let c = m.tool_calls[i]
+            let fn = Obj.new().str("name", c.name).str("arguments", c.arguments)
+            let call = Obj.new().str("id", c.id).str("type", "function").set("function", fn.build())
+            calls.push(call.build())
+            i = i + 1
+        }
+        o = o.set("tool_calls", JsonValue.Array(calls))
+    }
+    return o.build()
+}
+
+fun _tools_json(tools: List<ToolDef>) -> JsonValue {
+    let out: List<JsonValue> = []
+    let i = 0
+    while i < tools.len() {
+        let t = tools[i]
+        let fn = Obj.new().str("name", t.name).str("description", t.description).set(
+            "parameters",
+            t.parameters,
+        )
+        out.push(Obj.new().str("type", "function").set("function", fn.build()).build())
+        i = i + 1
+    }
+    return JsonValue.Array(out)
+}
+
+// Parse a /chat/completions response into a ChatReply. A missing optional
+// field is tolerated: an empty content with tool calls is normal, and a
+// provider that omits usage leaves the counts at 0.
+fun parse_reply(body: String) -> Result<ChatReply, Error> {
+    let j = parse(body)?
+    let choices = as_list(field(j, "choices"))
+    if choices.len() == 0 {
+        return Err(_shape_error(body))
+    }
+    let choice = choices[0]
+    let msg = field(choice, "message")
+    let reply = ChatReply {
+        content: as_str(field(msg, "content")),
+        model: as_str(field(j, "model")),
+        finish_reason: as_str(field(choice, "finish_reason")),
+        tool_calls: _parse_tool_calls(field(msg, "tool_calls")),
+        usage: _parse_usage(field(j, "usage")),
+        raw: body,
+    }
+    return Ok(reply)
+}
+
+fun _parse_tool_calls(j: JsonValue) -> List<ToolCall> {
+    let out: List<ToolCall> = []
+    let calls = as_list(j)
+    let i = 0
+    while i < calls.len() {
+        let c = calls[i]
+        let fn = field(c, "function")
+        out.push(
+            ToolCall {
+                id: as_str(field(c, "id")),
+                name: as_str(field(fn, "name")),
+                arguments: as_str(field(fn, "arguments")),
+            },
+        )
+        i = i + 1
+    }
+    return out
+}
+
+fun _parse_usage(j: JsonValue) -> Usage {
+    return Usage {
+        prompt_tokens: as_int_or(field(j, "prompt_tokens"), 0),
+        completion_tokens: as_int_or(field(j, "completion_tokens"), 0),
+        total_tokens: as_int_or(field(j, "total_tokens"), 0),
+    }
+}
+
+fun _shape_error(body: String) -> Error {
+    let head = body
+    if body.length() > 300 {
+        head = "${body.substring(0, 300)}..."
+    }
+    return Error { kind: "aviary", message: "response had no choices: ${head}" }
+}
+
+// Request headers: JSON content type, the credential in its provider's style,
+// then any extra header lines the caller added.
+fun _headers(spec: Spec, req: ChatRequest) -> String {
+    let h = "Content-Type: application/json"
+    match spec.auth {
+        Bearer -> {
+            h = "${h}\nAuthorization: Bearer ${spec.key}"
+        },
+        ApiKeyHeader -> {
+            h = "${h}\napi-key: ${spec.key}"
+        },
+    }
+    if req.extra_headers != "" {
+        h = "${h}\n${req.extra_headers}"
+    }
+    return h
+}
