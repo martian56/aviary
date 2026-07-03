@@ -1,0 +1,50 @@
+// The accumulated state of one streamed completion, shared by every
+// adapter: each applies its provider's events to this and hands back text
+// deltas, and the finished accumulator becomes the ChatReply.
+
+import "../message" { ToolCall }
+import "../request" { ChatReply, Usage }
+
+struct StreamAcc {
+    text: String,
+    model: String,
+    finish_reason: String,
+    tool_calls: List<ToolCall>,
+    prompt_tokens: Int,
+    completion_tokens: Int,
+    total_tokens: Int,
+}
+
+impl StreamAcc {
+    fun new() -> StreamAcc {
+        let calls: List<ToolCall> = []
+        return StreamAcc {
+            text: "",
+            model: "",
+            finish_reason: "",
+            tool_calls: calls,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        }
+    }
+
+    fun to_reply(self) -> ChatReply {
+        let total = self.total_tokens
+        if total == 0 {
+            total = self.prompt_tokens + self.completion_tokens
+        }
+        return ChatReply {
+            content: self.text,
+            model: self.model,
+            finish_reason: self.finish_reason,
+            tool_calls: self.tool_calls,
+            usage: Usage {
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+                total_tokens: total,
+            },
+            raw: "",
+        }
+    }
+}

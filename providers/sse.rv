@@ -1,0 +1,91 @@
+// A server-sent-events parser. Transport chunks split anywhere, so the
+// parser buffers input and yields only complete events: for each blank-line
+// terminated block, the payload is its data lines joined by newline. Event
+// name lines are dropped; every provider aviary speaks to repeats the type
+// inside the JSON payload. Pure string work, no I/O, so tests feed chunks
+// directly.
+
+import std/string
+
+struct SseParser {
+    buf: String,
+}
+
+impl SseParser {
+    fun new() -> SseParser {
+        return SseParser { buf: "" }
+    }
+
+    // Feed one transport chunk; get back the data payloads of every event
+    // completed by it, in order.
+    fun feed(self, chunk: String) -> List<String> {
+        self.buf = self.buf.concat(chunk)
+        let out: List<String> = []
+        let scanning = true
+        while scanning {
+            let cut = _event_end(self.buf)
+            if cut < 0 {
+                scanning = false
+            } else {
+                let block = self.buf.substring(0, cut)
+                self.buf = _after_separator(self.buf, cut)
+                let data = _event_data(block)
+                if data != "" {
+                    out.push(data)
+                }
+            }
+        }
+        return out
+    }
+}
+
+// Byte offset of the first event separator (a blank line), or -1 when the
+// buffer holds no complete event yet.
+fun _event_end(buf: String) -> Int {
+    let lf = buf.index_of("\n\n")
+    let crlf = buf.index_of("\r\n\r\n")
+    if lf < 0 {
+        return crlf
+    }
+    if crlf < 0 {
+        return lf
+    }
+    if crlf < lf {
+        return crlf
+    }
+    return lf
+}
+
+// The buffer with the event block and its separator removed. The separator
+// at `cut` is either \n\n or \r\n\r\n; look at the byte there to know.
+fun _after_separator(buf: String, cut: Int) -> String {
+    let sep = 2
+    if buf.byte_at(cut) == 13 {
+        sep = 4
+    }
+    return buf.substring(cut + sep, buf.length())
+}
+
+// The data payload of one event block: every `data:` line, prefix stripped,
+// joined by newline. Comments, event names, and ids are dropped.
+fun _event_data(block: String) -> String {
+    let out = ""
+    let lines = block.lines()
+    let i = 0
+    while i < lines.len() {
+        let line = lines[i]
+        if line.starts_with("data:") {
+            let value = line.substring(5, line.length())
+            if value.starts_with(" ") {
+                value = value.substring(1, value.length())
+            }
+            if out == "" {
+                out = value
+            } else {
+                out = "${out}\n${value}"
+            }
+        }
+        i = i + 1
+    }
+    return out
+}

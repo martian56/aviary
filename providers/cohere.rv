@@ -8,23 +8,140 @@ import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
 import "../message" { Message, Role, role_str, ToolCall, ToolDef }
 import "../request" { ChatRequest, ChatReply, Usage }
 import "./registry" { Spec, trim_base }
-import "./transport" { post_json }
+import "./transport" { post_json, open_sse }
+import "./sse" { SseParser }
+import "./accum" { StreamAcc }
 import std/error { Error }
 
 fun cohere_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
     let url = "${trim_base(spec.base_url)}/chat"
     let body = build_body(model, req)
+    let headers = _headers(spec, req)
+    let response = post_json(url, body, headers, req.timeout_ms, req.retries)?
+    return parse_reply(response)
+}
+
+// Stream a completion, calling on_text with each text delta, and return
+// the assembled reply. Cohere v2 sends typed events: text rides
+// content-delta events, tool calls a tool-call-start with the id and name
+// followed by tool-call-delta argument fragments, and the finish reason
+// and token counts arrive in message-end.
+fun cohere_stream(
+    model: String,
+    req: ChatRequest,
+    spec: Spec,
+    on_text: fun(String) -> Unit,
+) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/chat"
+    let body = build_body_with(model, req, true)
+    let headers = _headers(spec, req)
+    let s = open_sse(url, body, headers, req.timeout_ms, req.retries)?
+    let parser = SseParser.new()
+    let acc = StreamAcc.new()
+    let reading = true
+    while reading {
+        match s.read_chunk() {
+            Ok(chunk) -> {
+                if chunk.length() == 0 {
+                    reading = false
+                } else {
+                    let events = parser.feed(chunk)
+                    let i = 0
+                    while i < events.len() {
+                        let delta = apply_stream_event(acc, events[i])
+                        if delta != "" {
+                            on_text(delta)
+                        }
+                        i = i + 1
+                    }
+                }
+            },
+            Err(e) -> {
+                s.close()
+                return Err(e)
+            },
+        }
+    }
+    s.close()
+    return Ok(acc.to_reply())
+}
+
+// Apply one event payload to the accumulator and return the text delta it
+// carried. Pure, so tests feed event payloads directly.
+fun apply_stream_event(acc: StreamAcc, data: String) -> String {
+    let parsed = JsonValue.Null
+    let ok = true
+    match parse(data) {
+        Ok(v) -> {
+            parsed = v
+        },
+        Err(e) -> {
+            ok = false
+        },
+    }
+    if !ok {
+        return ""
+    }
+    let j = parsed
+    let kind = as_str(field(j, "type"))
+    if kind == "content-delta" {
+        let content = field(field(field(j, "delta"), "message"), "content")
+        let text = as_str(field(content, "text"))
+        if text != "" {
+            acc.text = "${acc.text}${text}"
+        }
+        return text
+    }
+    if kind == "tool-call-start" {
+        let call = field(field(field(j, "delta"), "message"), "tool_calls")
+        acc.tool_calls.push(
+            ToolCall {
+                id: as_str(field(call, "id")),
+                name: as_str(field(field(call, "function"), "name")),
+                arguments: "",
+            },
+        )
+        return ""
+    }
+    if kind == "tool-call-delta" && acc.tool_calls.len() > 0 {
+        let call = field(field(field(j, "delta"), "message"), "tool_calls")
+        let fragment = as_str(field(field(call, "function"), "arguments"))
+        let last = acc.tool_calls[acc.tool_calls.len() - 1]
+        last.arguments = "${last.arguments}${fragment}"
+        return ""
+    }
+    if kind == "message-end" {
+        let delta = field(j, "delta")
+        let finish = as_str(field(delta, "finish_reason"))
+        if finish != "" {
+            acc.finish_reason = finish
+        }
+        let tokens = field(field(delta, "usage"), "tokens")
+        acc.prompt_tokens = as_int_or(field(tokens, "input_tokens"), acc.prompt_tokens)
+        acc.completion_tokens = as_int_or(field(tokens, "output_tokens"), acc.completion_tokens)
+        return ""
+    }
+    return ""
+}
+
+fun _headers(spec: Spec, req: ChatRequest) -> String {
     let headers = "Content-Type: application/json\nAuthorization: Bearer ${spec.key}"
     if req.extra_headers != "" {
         headers = "${headers}\n${req.extra_headers}"
     }
-    let response = post_json(url, body, headers)?
-    return parse_reply(response)
+    return headers
 }
 
 fun build_body(model: String, req: ChatRequest) -> String {
+    return build_body_with(model, req, false)
+}
+
+fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String {
     let root = Obj.new()
     root.str("model", model)
+    if streaming {
+        root = root.bool("stream", true)
+    }
 
     let msgs: List<JsonValue> = []
     let i = 0

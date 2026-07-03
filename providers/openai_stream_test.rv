@@ -1,0 +1,60 @@
+import std/string
+import std/test { assert_eq_int, assert_eq_str, assert_true }
+import "./openai" { apply_stream_event }
+import "./accum" { StreamAcc }
+
+fun test_text_deltas_accumulate_and_return() {
+    let acc = StreamAcc.new()
+    let first = apply_stream_event(
+        acc,
+        "{\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}",
+    )
+    let second = apply_stream_event(acc, "{\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}")
+    assert_eq_str(first, "Hel")
+    assert_eq_str(second, "lo")
+    assert_eq_str(acc.text, "Hello")
+    assert_eq_str(acc.model, "gpt-4o")
+}
+
+fun test_finish_reason_lands() {
+    let acc = StreamAcc.new()
+    apply_stream_event(acc, "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}")
+    assert_eq_str(acc.finish_reason, "stop")
+}
+
+fun test_tool_call_fragments_assemble() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}]}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"ci\"}}]}}]}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"ty\\\":\\\"NYC\\\"}\"}}]}}]}",
+    )
+    assert_eq_int(acc.tool_calls.len(), 1)
+    assert_eq_str(acc.tool_calls[0].id, "call_1")
+    assert_eq_str(acc.tool_calls[0].name, "get_weather")
+    assert_eq_str(acc.tool_calls[0].arguments, "{\"city\":\"NYC\"}")
+}
+
+fun test_usage_from_final_chunk() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":5,\"total_tokens\":16},\"choices\":[]}",
+    )
+    let reply = acc.to_reply()
+    assert_eq_int(reply.usage.prompt_tokens, 11)
+    assert_eq_int(reply.usage.total_tokens, 16)
+}
+
+fun test_malformed_event_is_ignored() {
+    let acc = StreamAcc.new()
+    assert_eq_str(apply_stream_event(acc, "not json"), "")
+    assert_eq_str(acc.text, "")
+}

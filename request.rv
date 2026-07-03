@@ -38,6 +38,12 @@ struct ChatRequest {
     base_url: String,
     // Extra request header lines ("Key: Value"), joined onto the defaults.
     extra_headers: String,
+    // Request deadline in milliseconds; 0 means aviary's default (120s for
+    // a buffered completion, 30s per read on a stream).
+    timeout_ms: Int,
+    // Retries on transient failures (429, 5xx, transport errors), with
+    // exponential backoff between attempts.
+    retries: Int,
 }
 
 impl ChatRequest {
@@ -54,6 +60,8 @@ impl ChatRequest {
             api_key: "",
             base_url: "",
             extra_headers: "",
+            timeout_ms: 0,
+            retries: 2,
         }
     }
 
@@ -113,6 +121,21 @@ impl ChatRequest {
         } else {
             self.extra_headers = "${self.extra_headers}\n${line}"
         }
+        return self
+    }
+
+    // Deadline for the request in milliseconds. On a buffered completion it
+    // bounds the whole call; on a stream it bounds the connect and each
+    // read. 0 restores aviary's defaults.
+    fun timeout(self, ms: Int) -> ChatRequest {
+        self.timeout_ms = ms
+        return self
+    }
+
+    // How many times a transient failure (429, 5xx, transport error) is
+    // retried, with exponential backoff. 0 disables retries.
+    fun retries(self, n: Int) -> ChatRequest {
+        self.retries = n
         return self
     }
 }

@@ -28,6 +28,15 @@ fun test_builder_appends_messages_in_order() {
     assert_eq_str(role_str(req.messages[2].role), "assistant")
 }
 
+fun test_timeout_and_retries_builders() {
+    let req = ChatRequest.new("openai/gpt-4o")
+    assert_eq_int(req.timeout_ms, 0)
+    assert_eq_int(req.retries, 2)
+    let tuned = ChatRequest.new("openai/gpt-4o").timeout(30000).retries(0)
+    assert_eq_int(tuned.timeout_ms, 30000)
+    assert_eq_int(tuned.retries, 0)
+}
+
 fun test_option_setters() {
     let req = ChatRequest.new("openai/gpt-4o").temperature(0.7).max_tokens(200).top_p(0.95).key("k").base(
         "b",

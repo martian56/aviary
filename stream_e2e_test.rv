@@ -1,0 +1,123 @@
+// End-to-end tests against an in-process std/http server posing as an
+// OpenAI-compatible endpoint via the custom provider. These exercise the
+// full path: routing, transport with timeout and retries, SSE parsing, and
+// reply assembly, all without leaving the process. Each test starts its own
+// server on its own port; deltas are recorded through a module global since
+// every test runs in a fresh process.
+
+import std/string
+import std/http { Server, Request, Response }
+import std/time { sleep_millis }
+import std/test { assert_eq_int, assert_eq_str, assert_true }
+import "./request" { ChatRequest }
+import "./lib" { complete, complete_stream }
+
+let sink: List<String> = []
+let hits = 0
+
+fun record(t: String) {
+    sink.push(t)
+}
+
+fun chat_json(req: Request) -> Response {
+    return Response.json_raw(
+        "{\"model\":\"local-model\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"pong\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}",
+    )
+}
+
+fun chat_sse(req: Request) -> Response {
+    let doc = "data: {\"model\":\"local-model\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    return Response.text(doc)
+}
+
+fun chat_flaky(req: Request) -> Response {
+    hits = hits + 1
+    if hits == 1 {
+        return Response.with_body(503, "warming up")
+    }
+    return chat_json(req)
+}
+
+fun serve_json() {
+    let app = Server.new()
+    app.post("/v1/chat/completions", chat_json)
+    app.listen("127.0.0.1:8351")
+}
+
+fun serve_sse() {
+    let app = Server.new()
+    app.post("/v1/chat/completions", chat_sse)
+    app.listen("127.0.0.1:8352")
+}
+
+fun serve_flaky() {
+    let app = Server.new()
+    app.post("/v1/chat/completions", chat_flaky)
+    app.listen("127.0.0.1:8353")
+}
+
+// The server binds in a goroutine; give it a moment.
+fun settle() {
+    sleep_millis(150)
+}
+
+fun test_complete_against_local_server() {
+    spawn(fun() -> Unit {
+        serve_json()
+    })
+    settle()
+    let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
+        "http://127.0.0.1:8351/v1",
+    )
+    match complete(req) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "pong")
+            assert_eq_str(r.finish_reason, "stop")
+            assert_eq_int(r.usage.total_tokens, 4)
+        },
+        Err(e) -> {
+            assert_eq_str("complete failed", e.message)
+        },
+    }
+}
+
+fun test_stream_against_local_server() {
+    spawn(fun() -> Unit {
+        serve_sse()
+    })
+    settle()
+    let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
+        "http://127.0.0.1:8352/v1",
+    )
+    match complete_stream(req, record) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "Hello")
+            assert_eq_str(r.finish_reason, "stop")
+            assert_eq_int(sink.len(), 2)
+            assert_eq_str(sink[0], "Hel")
+            assert_eq_str(sink[1], "lo")
+        },
+        Err(e) -> {
+            assert_eq_str("stream failed", e.message)
+        },
+    }
+}
+
+fun test_transient_error_is_retried() {
+    spawn(fun() -> Unit {
+        serve_flaky()
+    })
+    settle()
+    let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
+        "http://127.0.0.1:8353/v1",
+    ).retries(2)
+    match complete(req) {
+        Ok(r) -> {
+            assert_eq_str(r.content, "pong")
+            assert_true(hits >= 2)
+        },
+        Err(e) -> {
+            assert_eq_str("retry failed", e.message)
+        },
+    }
+}

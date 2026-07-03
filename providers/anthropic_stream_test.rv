@@ -1,0 +1,79 @@
+import std/string
+import std/test { assert_eq_int, assert_eq_str, assert_true }
+import "./anthropic" { apply_stream_event }
+import "./accum" { StreamAcc }
+
+fun test_message_start_carries_model_and_prompt_tokens() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"type\":\"message_start\",\"message\":{\"model\":\"claude-3-5-sonnet\",\"usage\":{\"input_tokens\":21}}}",
+    )
+    assert_eq_str(acc.model, "claude-3-5-sonnet")
+    assert_eq_int(acc.prompt_tokens, 21)
+}
+
+fun test_text_deltas_accumulate() {
+    let acc = StreamAcc.new()
+    let first = apply_stream_event(
+        acc,
+        "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi \"}}",
+    )
+    let second = apply_stream_event(
+        acc,
+        "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"there\"}}",
+    )
+    assert_eq_str(first, "Hi ")
+    assert_eq_str(second, "there")
+    assert_eq_str(acc.text, "Hi there")
+}
+
+fun test_tool_use_block_assembles_arguments() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"get_weather\"}}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\"}}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"NYC\\\"}\"}}",
+    )
+    assert_eq_int(acc.tool_calls.len(), 1)
+    assert_eq_str(acc.tool_calls[0].id, "tu_1")
+    assert_eq_str(acc.tool_calls[0].name, "get_weather")
+    assert_eq_str(acc.tool_calls[0].arguments, "{\"city\":\"NYC\"}")
+}
+
+fun test_message_delta_carries_finish_and_output_tokens() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":9}}",
+    )
+    assert_eq_str(acc.finish_reason, "end_turn")
+    assert_eq_int(acc.completion_tokens, 9)
+}
+
+fun test_total_tokens_derived_when_absent() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"type\":\"message_start\",\"message\":{\"model\":\"claude\",\"usage\":{\"input_tokens\":10}}}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"type\":\"message_delta\",\"delta\":{},\"usage\":{\"output_tokens\":4}}",
+    )
+    let reply = acc.to_reply()
+    assert_eq_int(reply.usage.total_tokens, 14)
+}
+
+fun test_ping_events_are_ignored() {
+    let acc = StreamAcc.new()
+    assert_eq_str(apply_stream_event(acc, "{\"type\":\"ping\"}"), "")
+    assert_eq_str(acc.text, "")
+}

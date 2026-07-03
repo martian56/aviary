@@ -1,0 +1,56 @@
+import std/string
+import std/test { assert_eq_int, assert_eq_str, assert_true }
+import "./cohere" { apply_stream_event }
+import "./accum" { StreamAcc }
+
+fun test_content_deltas_accumulate() {
+    let acc = StreamAcc.new()
+    let first = apply_stream_event(
+        acc,
+        "{\"type\":\"content-delta\",\"index\":0,\"delta\":{\"message\":{\"content\":{\"text\":\"Hel\"}}}}",
+    )
+    let second = apply_stream_event(
+        acc,
+        "{\"type\":\"content-delta\",\"index\":0,\"delta\":{\"message\":{\"content\":{\"text\":\"lo\"}}}}",
+    )
+    assert_eq_str(first, "Hel")
+    assert_eq_str(second, "lo")
+    assert_eq_str(acc.text, "Hello")
+}
+
+fun test_tool_call_start_and_deltas_assemble() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"type\":\"tool-call-start\",\"delta\":{\"message\":{\"tool_calls\":{\"id\":\"c1\",\"function\":{\"name\":\"get_weather\"}}}}}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"type\":\"tool-call-delta\",\"delta\":{\"message\":{\"tool_calls\":{\"function\":{\"arguments\":\"{\\\"city\\\":\"}}}}}",
+    )
+    apply_stream_event(
+        acc,
+        "{\"type\":\"tool-call-delta\",\"delta\":{\"message\":{\"tool_calls\":{\"function\":{\"arguments\":\"\\\"NYC\\\"}\"}}}}}",
+    )
+    assert_eq_int(acc.tool_calls.len(), 1)
+    assert_eq_str(acc.tool_calls[0].id, "c1")
+    assert_eq_str(acc.tool_calls[0].arguments, "{\"city\":\"NYC\"}")
+}
+
+fun test_message_end_carries_finish_and_usage() {
+    let acc = StreamAcc.new()
+    apply_stream_event(
+        acc,
+        "{\"type\":\"message-end\",\"delta\":{\"finish_reason\":\"COMPLETE\",\"usage\":{\"tokens\":{\"input_tokens\":12,\"output_tokens\":7}}}}",
+    )
+    assert_eq_str(acc.finish_reason, "COMPLETE")
+    let reply = acc.to_reply()
+    assert_eq_int(reply.usage.prompt_tokens, 12)
+    assert_eq_int(reply.usage.total_tokens, 19)
+}
+
+fun test_unknown_event_types_are_ignored() {
+    let acc = StreamAcc.new()
+    assert_eq_str(apply_stream_event(acc, "{\"type\":\"citation-start\"}"), "")
+    assert_eq_str(acc.text, "")
+}

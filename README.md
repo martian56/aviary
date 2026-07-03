@@ -39,10 +39,12 @@ complete(ChatRequest.new("ollama/llama3").user("..."))
 ## Install
 
 ```
-rvpm add github.com/martian56/aviary@v0.1.0
+rvpm add github.com/martian56/aviary@v0.2.0
 ```
 
 No native dependencies; aviary is pure Raven over `std/http` and `std/json`.
+Streaming and per-request timeouts use `std/http` APIs added in Raven
+2.21.0, so build with that toolchain or newer.
 
 ## The model string
 
@@ -96,10 +98,15 @@ ChatRequest.new("openai/gpt-4o")
     .temperature(0.3)
     .max_tokens(500)
     .top_p(0.9)
+    .timeout(180000)      // optional deadline in ms; default 120s
+    .retries(0)           // optional; default 2 retries on 429/5xx/transport
     .key(my_key)          // optional; overrides the env var
     .base(my_base_url)    // optional; overrides the default endpoint
     .header("X-Title: my app")   // optional extra header line
 ```
+
+Transient failures (429, 500, 502, 503, 504, and transport errors) are
+retried with exponential backoff; anything else fails immediately.
 
 A one-liner when you just want text (no type imports needed):
 
@@ -123,6 +130,36 @@ struct ChatReply {
     raw: String,            // the provider's untouched JSON, for anything else
 }
 ```
+
+## Streaming
+
+`complete_stream` delivers the reply as it is produced: your callback gets
+each text delta the moment it arrives, and the assembled `ChatReply` comes
+back at the end. Works on every provider aviary supports.
+
+```raven
+import "github.com/martian56/aviary" { complete_stream }
+import "github.com/martian56/aviary/request" { ChatRequest }
+
+fun show(delta: String) {
+    print(delta)
+}
+
+fun main() {
+    let reply = complete_stream(
+        ChatRequest.new("anthropic/claude-3-5-sonnet-latest").user("Tell me about rooks."),
+        show,
+    )
+}
+```
+
+Tool calls stream too: fragments assemble internally and arrive complete in
+`reply.tool_calls`. On a stream, `.timeout(ms)` bounds the connect and each
+read rather than the whole response, so long generations keep flowing as
+long as the provider keeps sending. Retries apply only to the connection;
+once text has flowed, a failure surfaces as an error rather than a retry
+that would repeat output. Token counts are whatever the provider includes
+while streaming, which for some is nothing.
 
 ## Tool calling
 
@@ -153,13 +190,6 @@ Tool calling is supported on the OpenAI-compatible providers, Anthropic, and
 Gemini. On each, `tool_calls` on the reply carries the calls the model made,
 with `arguments` as the raw JSON string the model produced.
 
-## A limitation to know about
-
-aviary makes non-streaming requests, and Raven's `std/http` client has a
-fixed read timeout. A completion that takes longer than that to produce its
-whole response can time out, so keep `max_tokens` moderate for now.
-Streaming, and a configurable timeout, wait on runtime support.
-
 ## Layout
 
 Raven turns a package's file paths into its public import paths, and the
@@ -167,7 +197,7 @@ entry file must be `lib.rv` at the repo root, so the public surface lives at
 the root and the internals sit under `providers/`:
 
 ```
-lib.rv            complete, ask            (import aviary)
+lib.rv            complete, complete_stream, ask   (import aviary)
 request.rv        ChatRequest, ChatReply   (import aviary/request)
 message.rv        Role, Message, ToolDef   (import aviary/message)
 jsonutil.rv       Obj and JSON helpers     (import aviary/jsonutil)
@@ -175,6 +205,8 @@ providers/        internal, not imported directly
   registry.rv       provider table and resolution
   transport.rv      the one HTTP call
   openai.rv         the OpenAI-compatible adapter
+  sse.rv            the server-sent-events parser
+  accum.rv          the streamed-reply accumulator
   anthropic.rv, gemini.rv, cohere.rv   native adapters
 src/main.rv       the demo
 ```
@@ -182,7 +214,8 @@ src/main.rv       the demo
 ## Development
 
 ```
-rvpm test     # 57 tests: request building and response parsing per provider
+rvpm test     # 88 tests: request building, response and SSE parsing per
+              # provider, plus end-to-end runs against an in-process server
 rvpm build    # builds the demo in src/main.rv
 rvpm run      # prints the request it would send, or calls out if a key is set
 rvpm fmt

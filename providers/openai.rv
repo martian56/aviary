@@ -9,7 +9,9 @@ import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
 import "../message" { Message, Role, role_str, ToolCall, ToolDef }
 import "../request" { ChatRequest, ChatReply, Usage }
 import "./registry" { Spec, Auth, trim_base }
-import "./transport" { post_json }
+import "./transport" { post_json, open_sse }
+import "./sse" { SseParser }
+import "./accum" { StreamAcc }
 import std/error { Error }
 
 // Run a chat completion against an OpenAI-compatible endpoint.
@@ -17,15 +19,143 @@ fun openai_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatR
     let url = "${trim_base(spec.base_url)}/chat/completions"
     let body = build_body(model, req)
     let headers = _headers(spec, req)
-    let response = post_json(url, body, headers)?
+    let response = post_json(url, body, headers, req.timeout_ms, req.retries)?
     return parse_reply(response)
+}
+
+// Stream a chat completion, calling on_text with each text delta as it
+// arrives, and return the assembled reply. Token counts are whatever the
+// provider put in its final chunk, often nothing.
+fun openai_stream(
+    model: String,
+    req: ChatRequest,
+    spec: Spec,
+    on_text: fun(String) -> Unit,
+) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/chat/completions"
+    let body = build_body_with(model, req, true)
+    let headers = _headers(spec, req)
+    let s = open_sse(url, body, headers, req.timeout_ms, req.retries)?
+    let parser = SseParser.new()
+    let acc = StreamAcc.new()
+    let reading = true
+    while reading {
+        match s.read_chunk() {
+            Ok(chunk) -> {
+                if chunk.length() == 0 {
+                    reading = false
+                } else {
+                    let events = parser.feed(chunk)
+                    let i = 0
+                    while i < events.len() {
+                        if events[i] == "[DONE]" {
+                            reading = false
+                        } else {
+                            let delta = apply_stream_event(acc, events[i])
+                            if delta != "" {
+                                on_text(delta)
+                            }
+                        }
+                        i = i + 1
+                    }
+                }
+            },
+            Err(e) -> {
+                s.close()
+                return Err(e)
+            },
+        }
+    }
+    s.close()
+    return Ok(acc.to_reply())
+}
+
+// Apply one SSE event's JSON to the accumulator and return the text delta
+// it carried, empty when it carried none. Pure, so tests feed event
+// payloads directly.
+fun apply_stream_event(acc: StreamAcc, data: String) -> String {
+    let parsed = JsonValue.Null
+    let ok = true
+    match parse(data) {
+        Ok(v) -> {
+            parsed = v
+        },
+        Err(e) -> {
+            ok = false
+        },
+    }
+    if !ok {
+        return ""
+    }
+    let j = parsed
+    let m = as_str(field(j, "model"))
+    if m != "" {
+        acc.model = m
+    }
+    let usage = field(j, "usage")
+    if !usage.is_null() {
+        acc.prompt_tokens = as_int_or(field(usage, "prompt_tokens"), acc.prompt_tokens)
+        acc.completion_tokens = as_int_or(field(usage, "completion_tokens"), acc.completion_tokens)
+        acc.total_tokens = as_int_or(field(usage, "total_tokens"), acc.total_tokens)
+    }
+    let choices = as_list(field(j, "choices"))
+    if choices.len() == 0 {
+        return ""
+    }
+    let choice = choices[0]
+    let finish = as_str(field(choice, "finish_reason"))
+    if finish != "" {
+        acc.finish_reason = finish
+    }
+    let delta = field(choice, "delta")
+    _apply_tool_deltas(acc, as_list(field(delta, "tool_calls")))
+    let text = as_str(field(delta, "content"))
+    if text != "" {
+        acc.text = "${acc.text}${text}"
+    }
+    return text
+}
+
+// Merge streamed tool-call fragments into the accumulator by index.
+fun _apply_tool_deltas(acc: StreamAcc, deltas: List<JsonValue>) {
+    let i = 0
+    while i < deltas.len() {
+        let d = deltas[i]
+        let at = as_int_or(field(d, "index"), 0)
+        while acc.tool_calls.len() <= at {
+            acc.tool_calls.push(ToolCall { id: "", name: "", arguments: "" })
+        }
+        let call = acc.tool_calls[at]
+        let id = as_str(field(d, "id"))
+        if id != "" {
+            call.id = id
+        }
+        let fn = field(d, "function")
+        let name = as_str(field(fn, "name"))
+        if name != "" {
+            call.name = name
+        }
+        let args = as_str(field(fn, "arguments"))
+        if args != "" {
+            call.arguments = "${call.arguments}${args}"
+        }
+        i = i + 1
+    }
+    return
 }
 
 // The request body for /chat/completions. Only the options the caller set are
 // included, so a plain request is a model plus messages.
 fun build_body(model: String, req: ChatRequest) -> String {
+    return build_body_with(model, req, false)
+}
+
+fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String {
     let root = Obj.new()
     root.str("model", model)
+    if streaming {
+        root = root.bool("stream", true)
+    }
 
     let msgs: List<JsonValue> = []
     let i = 0

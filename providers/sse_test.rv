@@ -1,0 +1,73 @@
+import std/string
+import std/test { assert_eq_int, assert_eq_str }
+import "./sse" { SseParser }
+
+fun test_single_event() {
+    let p = SseParser.new()
+    let events = p.feed("data: hello\n\n")
+    assert_eq_int(events.len(), 1)
+    assert_eq_str(events[0], "hello")
+}
+
+fun test_two_events_in_one_chunk() {
+    let p = SseParser.new()
+    let events = p.feed("data: a\n\ndata: b\n\n")
+    assert_eq_int(events.len(), 2)
+    assert_eq_str(events[0], "a")
+    assert_eq_str(events[1], "b")
+}
+
+fun test_event_split_across_chunks() {
+    let p = SseParser.new()
+    let first = p.feed("data: hel")
+    assert_eq_int(first.len(), 0)
+    let second = p.feed("lo\n")
+    assert_eq_int(second.len(), 0)
+    let third = p.feed("\ndata: again\n\n")
+    assert_eq_int(third.len(), 2)
+    assert_eq_str(third[0], "hello")
+    assert_eq_str(third[1], "again")
+}
+
+fun test_crlf_separators() {
+    let p = SseParser.new()
+    let events = p.feed("data: one\r\n\r\ndata: two\r\n\r\n")
+    assert_eq_int(events.len(), 2)
+    assert_eq_str(events[0], "one")
+    assert_eq_str(events[1], "two")
+}
+
+fun test_multi_data_lines_join_with_newline() {
+    let p = SseParser.new()
+    let events = p.feed("data: line1\ndata: line2\n\n")
+    assert_eq_int(events.len(), 1)
+    assert_eq_str(events[0], "line1\nline2")
+}
+
+fun test_event_names_and_comments_are_dropped() {
+    let p = SseParser.new()
+    let events = p.feed("event: message_start\n: keepalive\ndata: payload\n\n")
+    assert_eq_int(events.len(), 1)
+    assert_eq_str(events[0], "payload")
+}
+
+fun test_data_without_space_after_colon() {
+    let p = SseParser.new()
+    let events = p.feed("data:tight\n\n")
+    assert_eq_int(events.len(), 1)
+    assert_eq_str(events[0], "tight")
+}
+
+fun test_done_sentinel_passes_through() {
+    let p = SseParser.new()
+    let events = p.feed("data: [DONE]\n\n")
+    assert_eq_int(events.len(), 1)
+    assert_eq_str(events[0], "[DONE]")
+}
+
+fun test_blank_events_are_skipped() {
+    let p = SseParser.new()
+    let events = p.feed("event: ping\n\ndata: real\n\n")
+    assert_eq_int(events.len(), 1)
+    assert_eq_str(events[0], "real")
+}

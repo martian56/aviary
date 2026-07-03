@@ -9,18 +9,132 @@ import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
 import "../message" { Message, Role, ToolCall, ToolDef }
 import "../request" { ChatRequest, ChatReply, Usage }
 import "./registry" { Spec, trim_base }
-import "./transport" { post_json }
+import "./transport" { post_json, open_sse }
+import "./sse" { SseParser }
+import "./accum" { StreamAcc }
 import std/error { Error }
 
 fun gemini_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
     let url = "${trim_base(spec.base_url)}/models/${model}:generateContent"
     let body = build_body(req)
+    let headers = _headers(spec, req)
+    let response = post_json(url, body, headers, req.timeout_ms, req.retries)?
+    return parse_reply(response)
+}
+
+// Stream a completion, calling on_text with each text delta, and return
+// the assembled reply. Gemini's streaming endpoint with alt=sse sends one
+// SSE event per chunk, each a full response object whose parts carry the
+// new text.
+fun gemini_stream(
+    model: String,
+    req: ChatRequest,
+    spec: Spec,
+    on_text: fun(String) -> Unit,
+) -> Result<ChatReply, Error> {
+    let url = "${trim_base(spec.base_url)}/models/${model}:streamGenerateContent?alt=sse"
+    let body = build_body(req)
+    let headers = _headers(spec, req)
+    let s = open_sse(url, body, headers, req.timeout_ms, req.retries)?
+    let parser = SseParser.new()
+    let acc = StreamAcc.new()
+    let reading = true
+    while reading {
+        match s.read_chunk() {
+            Ok(chunk) -> {
+                if chunk.length() == 0 {
+                    reading = false
+                } else {
+                    let events = parser.feed(chunk)
+                    let i = 0
+                    while i < events.len() {
+                        let delta = apply_stream_event(acc, events[i])
+                        if delta != "" {
+                            on_text(delta)
+                        }
+                        i = i + 1
+                    }
+                }
+            },
+            Err(e) -> {
+                s.close()
+                return Err(e)
+            },
+        }
+    }
+    s.close()
+    return Ok(acc.to_reply())
+}
+
+// Apply one streamed chunk to the accumulator and return its text delta.
+// Pure, so tests feed event payloads directly.
+fun apply_stream_event(acc: StreamAcc, data: String) -> String {
+    let parsed = JsonValue.Null
+    let ok = true
+    match parse(data) {
+        Ok(v) -> {
+            parsed = v
+        },
+        Err(e) -> {
+            ok = false
+        },
+    }
+    if !ok {
+        return ""
+    }
+    let j = parsed
+    let m = as_str(field(j, "modelVersion"))
+    if m != "" {
+        acc.model = m
+    }
+    let usage = field(j, "usageMetadata")
+    if !usage.is_null() {
+        acc.prompt_tokens = as_int_or(field(usage, "promptTokenCount"), acc.prompt_tokens)
+        acc.completion_tokens = as_int_or(field(usage, "candidatesTokenCount"), acc.completion_tokens)
+        acc.total_tokens = as_int_or(field(usage, "totalTokenCount"), acc.total_tokens)
+    }
+    let candidates = as_list(field(j, "candidates"))
+    if candidates.len() == 0 {
+        return ""
+    }
+    let cand = candidates[0]
+    let finish = as_str(field(cand, "finishReason"))
+    if finish != "" {
+        acc.finish_reason = finish
+    }
+    let parts = as_list(field(field(cand, "content"), "parts"))
+    let delta = ""
+    let i = 0
+    while i < parts.len() {
+        let p = parts[i]
+        let text = as_str(field(p, "text"))
+        if text != "" {
+            delta = "${delta}${text}"
+        }
+        let call = field(p, "functionCall")
+        if !call.is_null() {
+            acc.tool_calls.push(
+                ToolCall {
+                    id: "",
+                    name: as_str(field(call, "name")),
+                    arguments: stringify(field(call, "args")),
+                },
+            )
+        }
+        i = i + 1
+    }
+    if delta != "" {
+        acc.text = "${acc.text}${delta}"
+    }
+    return delta
+}
+
+fun _headers(spec: Spec, req: ChatRequest) -> String {
     let headers = "Content-Type: application/json\nx-goog-api-key: ${spec.key}"
     if req.extra_headers != "" {
         headers = "${headers}\n${req.extra_headers}"
     }
-    let response = post_json(url, body, headers)?
-    return parse_reply(response)
+    return headers
 }
 
 fun build_body(req: ChatRequest) -> String {
