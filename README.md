@@ -160,6 +160,25 @@ fixed read timeout. A completion that takes longer than that to produce its
 whole response can time out, so keep `max_tokens` moderate for now.
 Streaming, and a configurable timeout, wait on runtime support.
 
+## Layout
+
+Raven turns a package's file paths into its public import paths, and the
+entry file must be `lib.rv` at the repo root, so the public surface lives at
+the root and the internals sit under `providers/`:
+
+```
+lib.rv            complete, ask            (import aviary)
+request.rv        ChatRequest, ChatReply   (import aviary/request)
+message.rv        Role, Message, ToolDef   (import aviary/message)
+jsonutil.rv       Obj and JSON helpers     (import aviary/jsonutil)
+providers/        internal, not imported directly
+  registry.rv       provider table and resolution
+  transport.rv      the one HTTP call
+  openai.rv         the OpenAI-compatible adapter
+  anthropic.rv, gemini.rv, cohere.rv   native adapters
+src/main.rv       the demo
+```
+
 ## Development
 
 ```

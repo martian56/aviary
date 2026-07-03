@@ -5,10 +5,10 @@
 
 import std/string
 import std/json { JsonValue, stringify, parse }
-import "./jsonutil" { Obj, jstr, field, index, as_str, as_int_or, as_list }
-import "./message" { Message, Role, ToolCall, ToolDef }
-import "./request" { ChatRequest, ChatReply, Usage }
-import "./providers" { Spec, trim_base }
+import "../jsonutil" { Obj, jstr, field, index, as_str, as_int_or, as_list }
+import "../message" { Message, Role, ToolCall, ToolDef }
+import "../request" { ChatRequest, ChatReply, Usage }
+import "./registry" { Spec, trim_base }
 import "./transport" { post_json }
 import std/error { Error }
 

@@ -1,9 +1,9 @@
 import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
 import std/json { JsonValue, parse }
-import "./jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
-import "./message" { Message, Role, ToolCall, ToolDef }
-import "./request" { ChatRequest, ChatReply }
-import "./openai_compat" { build_body, parse_reply }
+import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
+import "../message" { Message, Role, ToolCall, ToolDef }
+import "../request" { ChatRequest, ChatReply }
+import "./openai" { build_body, parse_reply }
 
 fun must_parse(s: String) -> JsonValue {
     return match parse(s) {

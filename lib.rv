@@ -27,11 +27,11 @@ import std/string
 import std/error { Error, error }
 import "./message" { Message, Role, role_str, ToolCall, ToolDef }
 import "./request" { ChatRequest, ChatReply, Usage }
-import "./providers" { ProviderKind, Spec, resolve }
-import "./openai_compat" { openai_complete }
-import "./anthropic" { anthropic_complete }
-import "./gemini" { gemini_complete }
-import "./cohere" { cohere_complete }
+import "./providers/registry" { ProviderKind, Spec, resolve }
+import "./providers/openai" { openai_complete }
+import "./providers/anthropic" { anthropic_complete }
+import "./providers/gemini" { gemini_complete }
+import "./providers/cohere" { cohere_complete }
 
 // Send a chat request and get one reply. Routing, credential resolution, the
 // HTTP call, and response parsing all happen here; the caller sees a neutral

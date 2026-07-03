@@ -1,5 +1,5 @@
 import std/test { assert_eq_str, assert_true, assert_false, assert_ok, assert_err }
-import "./providers" { ProviderKind, Auth, Spec, Base, base_spec, resolve, trim_base }
+import "./registry" { ProviderKind, Auth, Spec, Base, base_spec, resolve, trim_base }
 
 fun kind_str(k: ProviderKind) -> String {
     return match k {

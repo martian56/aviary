@@ -10,8 +10,7 @@ import std/string
 import std/env { get_env, has_env }
 import "../request" { ChatRequest }
 import "../lib" { complete }
-import "../providers" { resolve }
-import "../openai_compat" { build_body }
+import "../providers/openai" { build_body }
 
 fun main() {
     let model = "openai/gpt-4o-mini"
@@ -24,10 +23,6 @@ fun main() {
     ).temperature(0.4).max_tokens(120)
 
     let slash = model.index_of("/")
-    let provider = ""
-    if slash >= 0 {
-        provider = model.substring(0, slash)
-    }
     let has_key = has_env("OPENAI_API_KEY") || has_env("ANTHROPIC_API_KEY") || has_env(
         "GEMINI_API_KEY",
     )
