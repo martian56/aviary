@@ -7,7 +7,8 @@ One chat-completion API across many LLM providers, for
 neutral request and reply; switch providers by changing the model string.
 
 ```raven
-import "github.com/martian56/aviary" { ChatRequest, complete }
+import "github.com/martian56/aviary" { complete }
+import "github.com/martian56/aviary/request" { ChatRequest }
 
 fun main() {
     let reply = complete(
@@ -21,6 +22,11 @@ fun main() {
     }
 }
 ```
+
+`complete` and `ask` come from the package root; the request, reply, and
+message types come from their sub-modules (`aviary/request` and
+`aviary/message`), the same way Raven libraries expose types defined outside
+the entry file.
 
 Point the same code at another provider by changing one string:
 
@@ -95,7 +101,7 @@ ChatRequest.new("openai/gpt-4o")
     .header("X-Title: my app")   // optional extra header line
 ```
 
-A one-liner when you just want text:
+A one-liner when you just want text (no type imports needed):
 
 ```raven
 import "github.com/martian56/aviary" { ask }
@@ -123,7 +129,9 @@ struct ChatReply {
 Declare tools with a JSON Schema for the arguments, then feed results back:
 
 ```raven
-import "github.com/martian56/aviary" { ChatRequest, ToolDef, Message, complete }
+import "github.com/martian56/aviary" { complete }
+import "github.com/martian56/aviary/request" { ChatRequest }
+import "github.com/martian56/aviary/message" { Message, ToolDef }
 import "github.com/martian56/aviary/jsonutil" { Obj }
 
 let weather = ToolDef.new(

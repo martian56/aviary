@@ -1,6 +1,7 @@
 // aviary: one chat-completion API across many LLM providers.
 //
-//     import "github.com/martian56/aviary" { ChatRequest, complete }
+//     import "github.com/martian56/aviary" { complete }
+//     import "github.com/martian56/aviary/request" { ChatRequest }
 //
 //     let reply = complete(
 //         ChatRequest.new("openai/gpt-4o-mini")
@@ -11,6 +12,9 @@
 //         Ok(r) -> print(r.content),
 //         Err(e) -> print(e.message),
 //     }
+//
+// complete and ask are exported here; the ChatRequest, ChatReply, Message,
+// and ToolDef types are imported from aviary/request and aviary/message.
 //
 // The model string is "provider/model". The provider selects the endpoint,
 // the credential (from its environment variable unless overridden), and the
