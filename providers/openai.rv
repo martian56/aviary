@@ -10,6 +10,7 @@ import "../message" { Message, Role, role_str, ToolCall, ToolDef }
 import "../request" { ChatRequest, ChatReply, Usage }
 import "./registry" { Spec, Auth, trim_base }
 import "./transport" { post_json, open_sse }
+import std/http { HttpStream }
 import "./sse" { SseParser }
 import "./accum" { StreamAcc }
 import std/error { Error }
@@ -40,6 +41,9 @@ fun openai_stream(
     let acc = StreamAcc.new()
     let reading = true
     while reading {
+        if req.cancel.canceled() {
+            return Ok(_stream_canceled(s, acc))
+        }
         match s.read_chunk() {
             Ok(chunk) -> {
                 if chunk.length() == 0 {
@@ -54,6 +58,9 @@ fun openai_stream(
                             let delta = apply_stream_event(acc, events[i])
                             if delta != "" {
                                 on_text(delta)
+                                if req.cancel.canceled() {
+                                    return Ok(_stream_canceled(s, acc))
+                                }
                             }
                         }
                         i = i + 1
@@ -293,4 +300,12 @@ fun _headers(spec: Spec, req: ChatRequest) -> String {
         h = "${h}\n${req.extra_headers}"
     }
     return h
+}
+
+// Close the stream and shape the partial accumulation as a canceled reply.
+fun _stream_canceled(s: HttpStream, acc: StreamAcc) -> ChatReply {
+    s.close()
+    let reply = acc.to_reply()
+    reply.finish_reason = "canceled"
+    return reply
 }

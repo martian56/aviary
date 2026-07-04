@@ -9,14 +9,21 @@ import std/string
 import std/http { Server, Request, Response }
 import std/time { sleep_millis }
 import std/test { assert_eq_int, assert_eq_str, assert_true }
-import "./request" { ChatRequest }
+import "./request" { ChatRequest, CancelToken }
 import "./lib" { complete, complete_stream }
 
 let sink: List<String> = []
 let hits = 0
+let cancel_tok: CancelToken = CancelToken.new()
 
 fun record(t: String) {
     sink.push(t)
+}
+
+// Records the delta, then cancels: the stream must stop before the next one.
+fun record_and_cancel(t: String) {
+    sink.push(t)
+    cancel_tok.cancel()
 }
 
 fun chat_json(req: Request) -> Response {
@@ -54,6 +61,18 @@ fun serve_flaky() {
     let app = Server.new()
     app.post("/v1/chat/completions", chat_flaky)
     app.listen("127.0.0.1:8353")
+}
+
+fun serve_sse_8354() {
+    let app = Server.new()
+    app.post("/v1/chat/completions", chat_sse)
+    app.listen("127.0.0.1:8354")
+}
+
+fun serve_sse_8355() {
+    let app = Server.new()
+    app.post("/v1/chat/completions", chat_sse)
+    app.listen("127.0.0.1:8355")
 }
 
 // The server binds in a goroutine; give it a moment.
@@ -99,6 +118,51 @@ fun test_stream_against_local_server() {
         },
         Err(e) -> {
             assert_eq_str("stream failed", e.message)
+        },
+    }
+}
+
+fun test_precanceled_stream_stops_before_any_delta() {
+    spawn(fun() -> Unit {
+        serve_sse_8354()
+    })
+    settle()
+    let tok = CancelToken.new()
+    tok.cancel()
+    let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
+        "http://127.0.0.1:8354/v1",
+    ).cancelable(tok)
+    match complete_stream(req, record) {
+        Ok(r) -> {
+            assert_eq_str(r.finish_reason, "canceled")
+            assert_eq_str(r.content, "")
+            assert_eq_int(sink.len(), 0)
+        },
+        Err(e) -> {
+            assert_eq_str("precanceled stream failed", e.message)
+        },
+    }
+}
+
+fun test_cancel_mid_stream_keeps_the_partial_reply() {
+    spawn(fun() -> Unit {
+        serve_sse_8355()
+    })
+    settle()
+    let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
+        "http://127.0.0.1:8355/v1",
+    ).cancelable(cancel_tok)
+    match complete_stream(req, record_and_cancel) {
+        Ok(r) -> {
+            // The first delta streamed, the callback canceled, and the
+            // second delta never arrived.
+            assert_eq_str(r.finish_reason, "canceled")
+            assert_eq_str(r.content, "Hel")
+            assert_eq_int(sink.len(), 1)
+            assert_eq_str(sink[0], "Hel")
+        },
+        Err(e) -> {
+            assert_eq_str("mid-stream cancel failed", e.message)
         },
     }
 }

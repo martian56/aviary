@@ -3,7 +3,38 @@
 // sentinel (a negative temperature or top_p, a zero max_tokens) so an adapter
 // includes only the fields the caller actually set.
 
+import std/sync { Mutex, mutex }
 import "./message" { Message, Role, ToolCall, ToolDef }
+
+// A cross-goroutine stop flag for a streaming completion. Attach one to a
+// request with .cancelable(token); calling cancel() from any goroutine stops
+// the stream at the next chunk (or text delta) boundary, and the reply comes
+// back Ok with finish_reason "canceled" and whatever text had streamed. A
+// stream blocked waiting on the network notices the cancel when the next
+// chunk arrives or the read times out.
+struct CancelToken {
+    lock: Mutex,
+    stopped: Bool,
+}
+
+impl CancelToken {
+    fun new() -> CancelToken {
+        return CancelToken { lock: mutex(), stopped: false }
+    }
+
+    fun cancel(self) {
+        self.lock.lock()
+        self.stopped = true
+        self.lock.unlock()
+    }
+
+    fun canceled(self) -> Bool {
+        self.lock.lock()
+        let v = self.stopped
+        self.lock.unlock()
+        return v
+    }
+}
 
 // Token counts from the provider. A provider that omits a count leaves it 0.
 struct Usage {
@@ -44,6 +75,8 @@ struct ChatRequest {
     // Retries on transient failures (429, 5xx, transport errors), with
     // exponential backoff between attempts.
     retries: Int,
+    // The stream's stop flag; a fresh (never canceled) token by default.
+    cancel: CancelToken,
 }
 
 impl ChatRequest {
@@ -62,7 +95,15 @@ impl ChatRequest {
             extra_headers: "",
             timeout_ms: 0,
             retries: 2,
+            cancel: CancelToken.new(),
         }
+    }
+
+    // Attach a cancel token, so another goroutine can stop this request's
+    // stream mid-reply. See CancelToken.
+    fun cancelable(self, token: CancelToken) -> ChatRequest {
+        self.cancel = token
+        return self
     }
 
     fun message(self, m: Message) -> ChatRequest {

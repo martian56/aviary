@@ -10,6 +10,7 @@ import "../message" { Message, Role, ToolCall, ToolDef }
 import "../request" { ChatRequest, ChatReply, Usage }
 import "./registry" { Spec, trim_base }
 import "./transport" { post_json, open_sse }
+import std/http { HttpStream }
 import "./sse" { SseParser }
 import "./accum" { StreamAcc }
 import std/error { Error }
@@ -40,6 +41,9 @@ fun gemini_stream(
     let acc = StreamAcc.new()
     let reading = true
     while reading {
+        if req.cancel.canceled() {
+            return Ok(_stream_canceled(s, acc))
+        }
         match s.read_chunk() {
             Ok(chunk) -> {
                 if chunk.length() == 0 {
@@ -51,6 +55,9 @@ fun gemini_stream(
                         let delta = apply_stream_event(acc, events[i])
                         if delta != "" {
                             on_text(delta)
+                            if req.cancel.canceled() {
+                                return Ok(_stream_canceled(s, acc))
+                            }
                         }
                         i = i + 1
                     }
@@ -271,4 +278,12 @@ fun _head(body: String) -> String {
         return "${body.substring(0, 300)}..."
     }
     return body
+}
+
+// Close the stream and shape the partial accumulation as a canceled reply.
+fun _stream_canceled(s: HttpStream, acc: StreamAcc) -> ChatReply {
+    s.close()
+    let reply = acc.to_reply()
+    reply.finish_reason = "canceled"
+    return reply
 }

@@ -161,6 +161,24 @@ once text has flowed, a failure surfaces as an error rather than a retry
 that would repeat output. Token counts are whatever the provider includes
 while streaming, which for some is nothing.
 
+A stream can be stopped mid-reply. Attach a `CancelToken` to the request
+and cancel it from any goroutine (an Esc handler, a timeout watchdog):
+
+```raven
+import "github.com/martian56/aviary/request" { ChatRequest, CancelToken }
+
+let tok = CancelToken.new()
+let req = ChatRequest.new("openai/gpt-5.5").user("...").cancelable(tok)
+// elsewhere, while complete_stream(req, show) is running:
+tok.cancel()
+```
+
+The stream stops at the next text delta (or chunk) boundary and the call
+returns `Ok` with `finish_reason` set to `"canceled"` and whatever text had
+streamed, so a UI can keep the partial reply. A stream blocked waiting on
+the network notices the cancel when the next chunk arrives or the read
+times out.
+
 ## Tool calling
 
 Declare tools with a JSON Schema for the arguments, then feed results back:
