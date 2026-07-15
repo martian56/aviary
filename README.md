@@ -6,7 +6,7 @@ One chat-completion API across many LLM providers, for
 [Raven](https://github.com/martian56/raven). Write your code once against a
 neutral request and reply; switch providers by changing the model string.
 
-```raven
+```rust
 import "github.com/martian56/aviary" { complete }
 import "github.com/martian56/aviary/request" { ChatRequest }
 
@@ -30,7 +30,7 @@ the entry file.
 
 Point the same code at another provider by changing one string:
 
-```raven
+```rust
 complete(ChatRequest.new("anthropic/claude-3-5-sonnet-latest").user("..."))
 complete(ChatRequest.new("groq/llama-3.3-70b-versatile").user("..."))
 complete(ChatRequest.new("ollama/llama3").user("..."))
@@ -39,7 +39,7 @@ complete(ChatRequest.new("ollama/llama3").user("..."))
 ## Install
 
 ```
-rvpm add github.com/martian56/aviary@v0.2.0
+rvpm add github.com/martian56/aviary@v0.3.0
 ```
 
 No native dependencies; aviary is pure Raven over `std/http` and `std/json`.
@@ -91,7 +91,7 @@ scope for now.
 `ChatRequest` is a builder. Options you do not set are left out of the
 request, so a minimal call is a model and a message.
 
-```raven
+```rust
 ChatRequest.new("openai/gpt-4o")
     .system("You are a careful editor.")
     .user("Tighten this sentence: ...")
@@ -110,7 +110,7 @@ retried with exponential backoff; anything else fails immediately.
 
 A one-liner when you just want text (no type imports needed):
 
-```raven
+```rust
 import "github.com/martian56/aviary" { ask }
 match ask("openai/gpt-4o-mini", "Say hi.") {
     Ok(text) -> print(text),
@@ -120,7 +120,7 @@ match ask("openai/gpt-4o-mini", "Say hi.") {
 
 ## The reply
 
-```raven
+```rust
 struct ChatReply {
     content: String,        // the text
     model: String,          // the model the provider reported
@@ -137,7 +137,7 @@ struct ChatReply {
 each text delta the moment it arrives, and the assembled `ChatReply` comes
 back at the end. Works on every provider aviary supports.
 
-```raven
+```rust
 import "github.com/martian56/aviary" { complete_stream }
 import "github.com/martian56/aviary/request" { ChatRequest }
 
@@ -164,7 +164,7 @@ while streaming, which for some is nothing.
 A stream can be stopped mid-reply. Attach a `CancelToken` to the request
 and cancel it from any goroutine (an Esc handler, a timeout watchdog):
 
-```raven
+```rust
 import "github.com/martian56/aviary/request" { ChatRequest, CancelToken }
 
 let tok = CancelToken.new()
@@ -183,7 +183,7 @@ times out.
 
 Declare tools with a JSON Schema for the arguments, then feed results back:
 
-```raven
+```rust
 import "github.com/martian56/aviary" { complete }
 import "github.com/martian56/aviary/request" { ChatRequest }
 import "github.com/martian56/aviary/message" { Message, ToolDef }
