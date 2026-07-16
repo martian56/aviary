@@ -33,13 +33,14 @@ Point the same code at another provider by changing one string:
 ```rust
 complete(ChatRequest.new("anthropic/claude-3-5-sonnet-latest").user("..."))
 complete(ChatRequest.new("groq/llama-3.3-70b-versatile").user("..."))
+complete(ChatRequest.new("sakana/fugu-ultra").user("...").timeout(600000))
 complete(ChatRequest.new("ollama/llama3").user("..."))
 ```
 
 ## Install
 
 ```
-rvpm add github.com/martian56/aviary@v0.3.0
+rvpm add github.com/martian56/aviary@v0.3.1
 ```
 
 No native dependencies; aviary is pure Raven over `std/http` and `std/json`.
@@ -75,6 +76,7 @@ path. Anthropic, Gemini, and Cohere have native adapters.
 | `deepinfra` | api.deepinfra.com | `DEEPINFRA_API_KEY` |
 | `nebius` | api.studio.nebius.ai | `NEBIUS_API_KEY` |
 | `moonshot` | api.moonshot.cn | `MOONSHOT_API_KEY` |
+| `sakana` | api.sakana.ai | `SAKANA_API_KEY` |
 | `azure` | `AZURE_API_BASE` | `AZURE_API_KEY` |
 | `ollama` | localhost:11434 (or `OLLAMA_HOST`) | none |
 | `custom` | `AVIARY_BASE_URL` (or `.base(...)`) | `AVIARY_API_KEY` |
@@ -85,6 +87,11 @@ with `.key(...)` and `.base(...)`, which win over the environment.
 
 Providers that need request signing (AWS Bedrock, Google Vertex) are out of
 scope for now.
+
+Sakana's direct API supports `sakana/fugu`, `sakana/fugu-ultra`, and the
+pinned `sakana/fugu-ultra-20260615` model. Fugu can spend longer orchestrating
+before its first streamed token, so use a larger request timeout for demanding
+turns.
 
 ## Building a request
 
