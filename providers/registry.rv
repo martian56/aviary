@@ -85,6 +85,9 @@ fun base_spec(provider: String) -> Result<Base, Error> {
     if provider == "moonshot" {
         return Ok(_openai("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"))
     }
+    if provider == "sakana" {
+        return Ok(_openai("https://api.sakana.ai/v1", "SAKANA_API_KEY"))
+    }
     if provider == "ollama" {
         // Local, keyless. OLLAMA_HOST may point elsewhere; the adapter appends
         // the OpenAI-compatible path.

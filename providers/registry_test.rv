@@ -21,6 +21,7 @@ fun test_openai_fleet_shares_the_openai_kind() {
         "fireworks",
         "perplexity",
         "openrouter",
+        "sakana",
     ]
     let i = 0
     while i < names.len() {
@@ -44,6 +45,13 @@ fun test_base_urls_and_key_envs() {
         Ok(b) -> {
             assert_eq_str(kind_str(b.kind), "anthropic")
             assert_eq_str(b.key_env, "ANTHROPIC_API_KEY")
+        },
+        Err(e) -> assert_true(false),
+    }
+    match base_spec("sakana") {
+        Ok(b) -> {
+            assert_eq_str(b.default_base, "https://api.sakana.ai/v1")
+            assert_eq_str(b.key_env, "SAKANA_API_KEY")
         },
         Err(e) -> assert_true(false),
     }
