@@ -267,6 +267,8 @@ fun parse_reply(body: String) -> Result<ChatReply, Error> {
             prompt_tokens: as_int_or(field(usage, "promptTokenCount"), 0),
             completion_tokens: as_int_or(field(usage, "candidatesTokenCount"), 0),
             total_tokens: as_int_or(field(usage, "totalTokenCount"), 0),
+            cache_read_tokens: as_int_or(field(usage, "cachedContentTokenCount"), 0),
+            cache_write_tokens: 0,
         },
         raw: body,
     }

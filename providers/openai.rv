@@ -269,10 +269,17 @@ fun _parse_tool_calls(j: JsonValue) -> List<ToolCall> {
 }
 
 fun _parse_usage(j: JsonValue) -> Usage {
+    // OpenAI-compatible endpoints auto-cache prefixes and report how many
+    // prompt tokens were a cache hit under prompt_tokens_details.cached_tokens;
+    // prompt_tokens already includes them, so this is only broken out for
+    // pricing. There is no separate cache-write count.
+    let cached = as_int_or(field(field(j, "prompt_tokens_details"), "cached_tokens"), 0)
     return Usage {
         prompt_tokens: as_int_or(field(j, "prompt_tokens"), 0),
         completion_tokens: as_int_or(field(j, "completion_tokens"), 0),
         total_tokens: as_int_or(field(j, "total_tokens"), 0),
+        cache_read_tokens: cached,
+        cache_write_tokens: 0,
     }
 }
 

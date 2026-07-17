@@ -97,7 +97,13 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
     if kind == "message_start" {
         let msg = field(j, "message")
         acc.model = as_str(field(msg, "model"))
-        acc.prompt_tokens = as_int_or(field(field(msg, "usage"), "input_tokens"), 0)
+        let u = field(msg, "usage")
+        let inp = as_int_or(field(u, "input_tokens"), 0)
+        let cache_read = as_int_or(field(u, "cache_read_input_tokens"), 0)
+        let cache_write = as_int_or(field(u, "cache_creation_input_tokens"), 0)
+        acc.cache_read_tokens = cache_read
+        acc.cache_write_tokens = cache_write
+        acc.prompt_tokens = inp + cache_read + cache_write
         return ""
     }
     if kind == "content_block_start" {
@@ -176,7 +182,14 @@ fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String 
     root.int("max_tokens", max)
 
     if split.system != "" {
-        root = root.str("system", split.system)
+        // With caching on, the system prompt is an array of content blocks so
+        // the last block can carry a cache_control marker; otherwise it stays
+        // a plain string, byte-identical to before.
+        if req.cache {
+            root = root.set("system", _system_blocks(split.system))
+        } else {
+            root = root.str("system", split.system)
+        }
     }
     root.set("messages", JsonValue.Array(split.messages))
 
@@ -187,9 +200,26 @@ fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String 
         root = root.float("top_p", req.top_p)
     }
     if req.tools.len() > 0 {
-        root = root.set("tools", _tools_json(req.tools))
+        root = root.set("tools", _tools_json(req.tools, req.cache))
     }
     return stringify(root.build())
+}
+
+// Anthropic's ephemeral cache-control marker. Placed on the last block of a
+// prefix, it tells the provider to cache everything up to and including it.
+fun _cache_control() -> JsonValue {
+    return Obj.new().str("type", "ephemeral").build()
+}
+
+// The system prompt as a single cacheable text block, so the tools-and-system
+// prefix is stored once and re-used on later calls with the same prefix.
+fun _system_blocks(system: String) -> JsonValue {
+    let block = Obj.new().str("type", "text").str("text", system).set(
+        "cache_control",
+        _cache_control(),
+    ).build()
+    let blocks: List<JsonValue> = [block]
+    return JsonValue.Array(blocks)
 }
 
 fun _split_messages(messages: List<Message>) -> Split {
@@ -252,17 +282,22 @@ fun _tool_result_json(m: Message) -> JsonValue {
     return Obj.new().str("role", "user").set("content", JsonValue.Array(blocks)).build()
 }
 
-fun _tools_json(tools: List<ToolDef>) -> JsonValue {
+fun _tools_json(tools: List<ToolDef>, cache: Bool) -> JsonValue {
     let out: List<JsonValue> = []
     let i = 0
     while i < tools.len() {
         let t = tools[i]
-        out.push(
-            Obj.new().str("name", t.name).str("description", t.description).set(
-                "input_schema",
-                t.parameters,
-            ).build(),
+        let obj = Obj.new().str("name", t.name).str("description", t.description).set(
+            "input_schema",
+            t.parameters,
         )
+        // Mark the last tool so the whole tool list is cached as one prefix
+        // segment, held separately from the system block above so the tools
+        // stay cached even when the system text changes.
+        if cache && i == tools.len() - 1 {
+            obj = obj.set("cache_control", _cache_control())
+        }
+        out.push(obj.build())
         i = i + 1
     }
     return JsonValue.Array(out)
@@ -301,17 +336,25 @@ fun parse_reply(body: String) -> Result<ChatReply, Error> {
         i = i + 1
     }
     let usage = field(j, "usage")
+    // Anthropic reports cached input separately from input_tokens, so the true
+    // prompt total is the sum of the three. The breakdown is kept so a caller
+    // can price cache reads and writes on their own.
     let input_tokens = as_int_or(field(usage, "input_tokens"), 0)
     let output_tokens = as_int_or(field(usage, "output_tokens"), 0)
+    let cache_read = as_int_or(field(usage, "cache_read_input_tokens"), 0)
+    let cache_write = as_int_or(field(usage, "cache_creation_input_tokens"), 0)
+    let prompt_total = input_tokens + cache_read + cache_write
     let reply = ChatReply {
         content: text,
         model: as_str(field(j, "model")),
         finish_reason: as_str(field(j, "stop_reason")),
         tool_calls: calls,
         usage: Usage {
-            prompt_tokens: input_tokens,
+            prompt_tokens: prompt_total,
             completion_tokens: output_tokens,
-            total_tokens: input_tokens + output_tokens,
+            total_tokens: prompt_total + output_tokens,
+            cache_read_tokens: cache_read,
+            cache_write_tokens: cache_write,
         },
         raw: body,
     }
