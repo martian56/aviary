@@ -41,6 +41,12 @@ struct Usage {
     prompt_tokens: Int,
     completion_tokens: Int,
     total_tokens: Int,
+    // How much of the input was served from, or written to, the prompt cache.
+    // prompt_tokens already counts these; they are broken out so a caller can
+    // price cache reads (cheaper) and cache writes (slightly dearer) on their
+    // own. 0 when the provider reports no caching.
+    cache_read_tokens: Int,
+    cache_write_tokens: Int,
 }
 
 // A model's reply. `content` is the text; `tool_calls` is non-empty when the
@@ -75,6 +81,12 @@ struct ChatRequest {
     // Retries on transient failures (429, 5xx, transport errors), with
     // exponential backoff between attempts.
     retries: Int,
+    // Ask the provider to cache the static prefix (the system prompt and the
+    // tool list) so repeated calls within and across a conversation re-use it
+    // instead of re-billing the whole prefix each time. Only the Anthropic
+    // adapter acts on this today; it is a no-op for providers without explicit
+    // cache control.
+    cache: Bool,
     // The stream's stop flag; a fresh (never canceled) token by default.
     cancel: CancelToken,
 }
@@ -95,6 +107,7 @@ impl ChatRequest {
             extra_headers: "",
             timeout_ms: 0,
             retries: 2,
+            cache: false,
             cancel: CancelToken.new(),
         }
     }
@@ -177,6 +190,13 @@ impl ChatRequest {
     // retried, with exponential backoff. 0 disables retries.
     fun retries(self, n: Int) -> ChatRequest {
         self.retries = n
+        return self
+    }
+
+    // Mark the static prefix (system prompt and tools) as cacheable. See the
+    // cache field. Only the Anthropic adapter uses this today.
+    fun cache(self, on: Bool) -> ChatRequest {
+        self.cache = on
         return self
     }
 }

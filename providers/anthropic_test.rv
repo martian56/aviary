@@ -76,6 +76,50 @@ fun test_tools_use_input_schema() {
     assert_false(field(tools[0], "input_schema").is_null())
 }
 
+fun test_cache_marks_the_system_and_the_last_tool() {
+    let req = ChatRequest.new("anthropic/claude").system("be terse").user("hi").tool(
+        ToolDef.new("a", "first", Obj.new().str("type", "object").build()),
+    ).tool(ToolDef.new("b", "second", Obj.new().str("type", "object").build())).cache(true)
+    let j = must_parse(build_body("claude", req))
+    // System becomes an array with one text block carrying an ephemeral marker.
+    let sys = as_list(field(j, "system"))
+    assert_eq_int(sys.len(), 1)
+    assert_eq_str(as_str(field(sys[0], "type")), "text")
+    assert_eq_str(as_str(field(sys[0], "text")), "be terse")
+    assert_eq_str(as_str(field(field(sys[0], "cache_control"), "type")), "ephemeral")
+    // Only the last tool carries the marker, so the whole tool list is one
+    // cache segment.
+    let tools = as_list(field(j, "tools"))
+    assert_eq_int(tools.len(), 2)
+    assert_true(field(tools[0], "cache_control").is_null())
+    assert_eq_str(as_str(field(field(tools[1], "cache_control"), "type")), "ephemeral")
+}
+
+fun test_no_cache_keeps_the_system_a_plain_string() {
+    let req = ChatRequest.new("anthropic/claude").system("be terse").user("hi").tool(
+        ToolDef.new("a", "first", Obj.new().str("type", "object").build()),
+    )
+    let j = must_parse(build_body("claude", req))
+    // Default: unchanged shape, a plain string system and an unmarked tool.
+    assert_eq_str(as_str(field(j, "system")), "be terse")
+    let tools = as_list(field(j, "tools"))
+    assert_true(field(tools[0], "cache_control").is_null())
+}
+
+fun test_parse_reply_counts_cached_input_tokens() {
+    let body = "{\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":5,\"output_tokens\":4}}"
+    match parse_reply(body) {
+        Ok(r) -> {
+            // prompt_tokens is the true total input: 10 + 100 + 5.
+            assert_eq_int(r.usage.prompt_tokens, 115)
+            assert_eq_int(r.usage.cache_read_tokens, 100)
+            assert_eq_int(r.usage.cache_write_tokens, 5)
+            assert_eq_int(r.usage.completion_tokens, 4)
+        },
+        Err(e) -> assert_true(false),
+    }
+}
+
 fun test_parse_text_reply() {
     let body = "{\"model\":\"claude-3-5-sonnet\",\"content\":[{\"type\":\"text\",\"text\":\"Hi there\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"output_tokens\":4}}"
     match parse_reply(body) {

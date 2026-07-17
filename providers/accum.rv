@@ -13,6 +13,8 @@ struct StreamAcc {
     prompt_tokens: Int,
     completion_tokens: Int,
     total_tokens: Int,
+    cache_read_tokens: Int,
+    cache_write_tokens: Int,
 }
 
 impl StreamAcc {
@@ -26,6 +28,8 @@ impl StreamAcc {
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
         }
     }
 
@@ -43,6 +47,8 @@ impl StreamAcc {
                 prompt_tokens: self.prompt_tokens,
                 completion_tokens: self.completion_tokens,
                 total_tokens: total,
+                cache_read_tokens: self.cache_read_tokens,
+                cache_write_tokens: self.cache_write_tokens,
             },
             raw: "",
         }

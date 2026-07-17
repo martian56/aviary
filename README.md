@@ -110,10 +110,27 @@ ChatRequest.new("openai/gpt-4o")
     .key(my_key)          // optional; overrides the env var
     .base(my_base_url)    // optional; overrides the default endpoint
     .header("X-Title: my app")   // optional extra header line
+    .cache(true)          // optional; cache the system prompt and tools
 ```
 
 Transient failures (429, 500, 502, 503, 504, and transport errors) are
 retried with exponential backoff; anything else fails immediately.
+
+### Prompt caching
+
+`.cache(true)` marks the static prefix, the system prompt and the tool list,
+as cacheable, so repeated calls that share it (the rounds of a tool-using
+turn, or successive turns in a conversation) reuse it instead of re-sending and
+re-billing the whole prefix each time. Today only the Anthropic adapter acts on
+it: it adds a `cache_control` marker to the system block and to the last tool.
+Other providers ignore the flag; OpenAI-compatible endpoints cache long
+prefixes automatically.
+
+`Usage` breaks the cached input out of the total so a caller can price it:
+`prompt_tokens` is the full input, and `cache_read_tokens` / `cache_write_tokens`
+are how much of it was served from, or written to, the cache (0 when the
+provider reports none). Anthropic bills cache reads at a fraction of the input
+rate and cache writes at a small premium.
 
 A one-liner when you just want text (no type imports needed):
 
@@ -133,7 +150,7 @@ struct ChatReply {
     model: String,          // the model the provider reported
     finish_reason: String,  // "stop", "tool_calls", "end_turn", ...
     tool_calls: List<ToolCall>,
-    usage: Usage,           // prompt_tokens, completion_tokens, total_tokens
+    usage: Usage,           // prompt/completion/total tokens, plus cache_read/write
     raw: String,            // the provider's untouched JSON, for anything else
 }
 ```
