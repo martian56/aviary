@@ -1,7 +1,7 @@
 // aviary: one chat-completion API across many LLM providers.
 //
-//     import "github.com/martian56/aviary" { complete }
-//     import "github.com/martian56/aviary/request" { ChatRequest }
+//     from "github.com/martian56/aviary" import complete
+//     from "github.com/martian56/aviary/request" import ChatRequest
 //
 //     let reply = complete(
 //         ChatRequest.new("openai/gpt-4o-mini")
@@ -23,47 +23,47 @@
 // services share one path, while Anthropic, Gemini, and Cohere have native
 // adapters. See the README for the full list and the environment variables.
 
-import std/string
-import std/error { Error, error }
-import "./message" { Message, Role, role_str, ToolCall, ToolDef }
-import "./request" { ChatRequest, ChatReply, Usage }
-import "./providers/registry" { ProviderKind, Spec, resolve }
-import "./providers/openai" { openai_complete, openai_stream }
-import "./providers/anthropic" { anthropic_complete, anthropic_stream }
-import "./providers/gemini" { gemini_complete, gemini_stream }
-import "./providers/cohere" { cohere_complete, cohere_stream }
+import std.string
+from std.error import Error, error
+from "./message" import Message, Role, role_str, ToolCall, ToolDef
+from "./request" import ChatRequest, ChatReply, Usage
+from "./providers/registry" import ProviderKind, Spec, resolve
+from "./providers/openai" import openai_complete, openai_stream
+from "./providers/anthropic" import anthropic_complete, anthropic_stream
+from "./providers/gemini" import gemini_complete, gemini_stream
+from "./providers/cohere" import cohere_complete, cohere_stream
 
 // A model string split at its first slash. Raven has no tuples, so the
 // split returns this small struct.
-struct ModelParts {
-    provider: String,
-    model: String,
+class ModelParts {
+    provider: str
+    model: str
 }
 
-fun _split_model(model: String) -> Result<ModelParts, Error> {
+fun _split_model(model: str) -> Result[ModelParts, Error] {
     let slash = model.index_of("/")
     if slash < 0 {
         return Err(error("model must be 'provider/model', got '${model}'"))
     }
     let provider = model.substring(0, slash)
     let rest = model.substring(slash + 1, model.length())
-    if provider == "" || rest == "" {
+    if provider == "" or rest == "" {
         return Err(error("model must be 'provider/model', got '${model}'"))
     }
-    return Ok(ModelParts { provider, model: rest })
+    return Ok(ModelParts(provider: provider, model: rest))
 }
 
 // Send a chat request and get one reply. Routing, credential resolution, the
 // HTTP call, and response parsing all happen here; the caller sees a neutral
 // ChatReply or an Error.
-fun complete(req: ChatRequest) -> Result<ChatReply, Error> {
+fun complete(req: ChatRequest) -> Result[ChatReply, Error] {
     let parts = _split_model(req.model)?
     let spec = resolve(parts.provider, req.api_key, req.base_url)?
     return match spec.kind {
-        OpenAI -> openai_complete(parts.model, req, spec),
-        Anthropic -> anthropic_complete(parts.model, req, spec),
-        Gemini -> gemini_complete(parts.model, req, spec),
-        Cohere -> cohere_complete(parts.model, req, spec),
+        case OpenAI { openai_complete(parts.model, req, spec) }
+        case Anthropic { anthropic_complete(parts.model, req, spec) }
+        case Gemini { gemini_complete(parts.model, req, spec) }
+        case Cohere { cohere_complete(parts.model, req, spec) }
     }
 }
 
@@ -72,21 +72,21 @@ fun complete(req: ChatRequest) -> Result<ChatReply, Error> {
 // back at the end (its raw field is empty; the stream was never one
 // document). Tool calls stream too and arrive complete on the reply.
 // Retries apply to the connection only, never after text has flowed.
-fun complete_stream(req: ChatRequest, on_text: fun(String) -> Unit) -> Result<ChatReply, Error> {
+fun complete_stream(req: ChatRequest, on_text: fun(str) -> Unit) -> Result[ChatReply, Error] {
     let parts = _split_model(req.model)?
     let spec = resolve(parts.provider, req.api_key, req.base_url)?
     return match spec.kind {
-        OpenAI -> openai_stream(parts.model, req, spec, on_text),
-        Anthropic -> anthropic_stream(parts.model, req, spec, on_text),
-        Gemini -> gemini_stream(parts.model, req, spec, on_text),
-        Cohere -> cohere_stream(parts.model, req, spec, on_text),
+        case OpenAI { openai_stream(parts.model, req, spec, on_text) }
+        case Anthropic { anthropic_stream(parts.model, req, spec, on_text) }
+        case Gemini { gemini_stream(parts.model, req, spec, on_text) }
+        case Cohere { cohere_stream(parts.model, req, spec, on_text) }
     }
 }
 
 // A one-shot text completion: a single user prompt, the reply's text, or the
 // error message. Convenient when there is no system prompt, no history, and
 // no tools.
-fun ask(model: String, prompt: String) -> Result<String, Error> {
+fun ask(model: str, prompt: str) -> Result[str, Error] {
     let reply = complete(ChatRequest.new(model).user(prompt))?
     return Ok(reply.content)
 }

@@ -3,20 +3,20 @@
 // OpenAI-compatible endpoint all share this code; they differ only in the
 // base URL and credential resolved in providers.rv.
 
-import std/string
-import std/json { JsonValue, stringify, parse }
-import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
-import "../message" { Message, Role, role_str, ToolCall, ToolDef }
-import "../request" { ChatRequest, ChatReply, Usage }
-import "./registry" { Spec, Auth, trim_base }
-import "./transport" { post_json, open_sse }
-import std/http { HttpStream }
-import "./sse" { SseParser }
-import "./accum" { StreamAcc }
-import std/error { Error }
+import std.string
+from std.json import JsonValue, stringify, parse
+from "../jsonutil" import Obj, field, index, as_str, as_int_or, as_list
+from "../message" import Message, Role, role_str, ToolCall, ToolDef
+from "../request" import ChatRequest, ChatReply, Usage
+from "./registry" import Spec, Auth, trim_base
+from "./transport" import post_json, open_sse
+from std.http import HttpStream
+from "./sse" import SseParser
+from "./accum" import StreamAcc
+from std.error import Error
 
 // Run a chat completion against an OpenAI-compatible endpoint.
-fun openai_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+fun openai_complete(model: str, req: ChatRequest, spec: Spec) -> Result[ChatReply, Error] {
     let url = "${trim_base(spec.base_url)}/chat/completions"
     let body = build_body(model, req)
     let headers = _headers(spec, req)
@@ -28,29 +28,29 @@ fun openai_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatR
 // arrives, and return the assembled reply. Token counts are whatever the
 // provider put in its final chunk, often nothing.
 fun openai_stream(
-    model: String,
+    model: str,
     req: ChatRequest,
     spec: Spec,
-    on_text: fun(String) -> Unit,
-) -> Result<ChatReply, Error> {
+    on_text: fun(str) -> Unit,
+) -> Result[ChatReply, Error] {
     let url = "${trim_base(spec.base_url)}/chat/completions"
     let body = build_body_with(model, req, true)
     let headers = _headers(spec, req)
     let s = open_sse(url, body, headers, req.timeout_ms, req.retries)?
     let parser = SseParser.new()
     let acc = StreamAcc.new()
-    let reading = true
+    var reading = true
     while reading {
         if req.cancel.canceled() {
             return Ok(_stream_canceled(s, acc))
         }
         match s.read_chunk() {
-            Ok(chunk) -> {
+            case Ok(chunk) {
                 if chunk.length() == 0 {
                     reading = false
                 } else {
                     let events = parser.feed(chunk)
-                    let i = 0
+                    var i = 0
                     while i < events.len() {
                         if events[i] == "[DONE]" {
                             reading = false
@@ -66,11 +66,11 @@ fun openai_stream(
                         i = i + 1
                     }
                 }
-            },
-            Err(e) -> {
+            }
+            case Err(e) {
                 s.close()
                 return Err(e)
-            },
+            }
         }
     }
     s.close()
@@ -80,18 +80,18 @@ fun openai_stream(
 // Apply one SSE event's JSON to the accumulator and return the text delta
 // it carried, empty when it carried none. Pure, so tests feed event
 // payloads directly.
-fun apply_stream_event(acc: StreamAcc, data: String) -> String {
-    let parsed = JsonValue.Null
-    let ok = true
+fun apply_stream_event(acc: StreamAcc, data: str) -> str {
+    var parsed = JsonValue.Null
+    var ok = true
     match parse(data) {
-        Ok(v) -> {
+        case Ok(v) {
             parsed = v
-        },
-        Err(e) -> {
+        }
+        case Err(e) {
             ok = false
-        },
+        }
     }
-    if !ok {
+    if not ok {
         return ""
     }
     let j = parsed
@@ -100,7 +100,7 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
         acc.model = m
     }
     let usage = field(j, "usage")
-    if !usage.is_null() {
+    if not usage.is_null() {
         acc.prompt_tokens = as_int_or(field(usage, "prompt_tokens"), acc.prompt_tokens)
         acc.completion_tokens = as_int_or(field(usage, "completion_tokens"), acc.completion_tokens)
         acc.total_tokens = as_int_or(field(usage, "total_tokens"), acc.total_tokens)
@@ -124,13 +124,13 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
 }
 
 // Merge streamed tool-call fragments into the accumulator by index.
-fun _apply_tool_deltas(acc: StreamAcc, deltas: List<JsonValue>) {
-    let i = 0
+fun _apply_tool_deltas(acc: StreamAcc, deltas: list[JsonValue]) {
+    var i = 0
     while i < deltas.len() {
         let d = deltas[i]
         let at = as_int_or(field(d, "index"), 0)
         while acc.tool_calls.len() <= at {
-            acc.tool_calls.push(ToolCall { id: "", name: "", arguments: "" })
+            acc.tool_calls.push(ToolCall(id: "", name: "", arguments: ""))
         }
         let call = acc.tool_calls[at]
         let id = as_str(field(d, "id"))
@@ -153,19 +153,19 @@ fun _apply_tool_deltas(acc: StreamAcc, deltas: List<JsonValue>) {
 
 // The request body for /chat/completions. Only the options the caller set are
 // included, so a plain request is a model plus messages.
-fun build_body(model: String, req: ChatRequest) -> String {
+fun build_body(model: str, req: ChatRequest) -> str {
     return build_body_with(model, req, false)
 }
 
-fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String {
-    let root = Obj.new()
+fun build_body_with(model: str, req: ChatRequest, streaming: bool) -> str {
+    var root = Obj.new()
     root.str("model", model)
     if streaming {
         root = root.bool("stream", true)
     }
 
-    let msgs: List<JsonValue> = []
-    let i = 0
+    let msgs: list[JsonValue] = []
+    var i = 0
     while i < req.messages.len() {
         msgs.push(_message_json(req.messages[i]))
         i = i + 1
@@ -188,18 +188,18 @@ fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String 
 }
 
 fun _message_json(m: Message) -> JsonValue {
-    let o = Obj.new()
+    var o = Obj.new()
     o = o.str("role", role_str(m.role))
     o = o.str("content", m.content)
     match m.role {
-        Tool -> {
+        case Tool {
             o = o.str("tool_call_id", m.tool_call_id)
-        },
-        _ -> {},
+        }
+        case _ {}
     }
     if m.tool_calls.len() > 0 {
-        let calls: List<JsonValue> = []
-        let i = 0
+        let calls: list[JsonValue] = []
+        var i = 0
         while i < m.tool_calls.len() {
             let c = m.tool_calls[i]
             let fn = Obj.new().str("name", c.name).str("arguments", c.arguments)
@@ -212,9 +212,9 @@ fun _message_json(m: Message) -> JsonValue {
     return o.build()
 }
 
-fun _tools_json(tools: List<ToolDef>) -> JsonValue {
-    let out: List<JsonValue> = []
-    let i = 0
+fun _tools_json(tools: list[ToolDef]) -> JsonValue {
+    let out: list[JsonValue] = []
+    var i = 0
     while i < tools.len() {
         let t = tools[i]
         let fn = Obj.new().str("name", t.name).str("description", t.description).set(
@@ -230,7 +230,7 @@ fun _tools_json(tools: List<ToolDef>) -> JsonValue {
 // Parse a /chat/completions response into a ChatReply. A missing optional
 // field is tolerated: an empty content with tool calls is normal, and a
 // provider that omits usage leaves the counts at 0.
-fun parse_reply(body: String) -> Result<ChatReply, Error> {
+fun parse_reply(body: str) -> Result[ChatReply, Error] {
     let j = parse(body)?
     let choices = as_list(field(j, "choices"))
     if choices.len() == 0 {
@@ -238,30 +238,30 @@ fun parse_reply(body: String) -> Result<ChatReply, Error> {
     }
     let choice = choices[0]
     let msg = field(choice, "message")
-    let reply = ChatReply {
+    let reply = ChatReply(
         content: as_str(field(msg, "content")),
         model: as_str(field(j, "model")),
         finish_reason: as_str(field(choice, "finish_reason")),
         tool_calls: _parse_tool_calls(field(msg, "tool_calls")),
         usage: _parse_usage(field(j, "usage")),
         raw: body,
-    }
+    )
     return Ok(reply)
 }
 
-fun _parse_tool_calls(j: JsonValue) -> List<ToolCall> {
-    let out: List<ToolCall> = []
+fun _parse_tool_calls(j: JsonValue) -> list[ToolCall] {
+    let out: list[ToolCall] = []
     let calls = as_list(j)
-    let i = 0
+    var i = 0
     while i < calls.len() {
         let c = calls[i]
         let fn = field(c, "function")
         out.push(
-            ToolCall {
+            ToolCall(
                 id: as_str(field(c, "id")),
                 name: as_str(field(fn, "name")),
                 arguments: as_str(field(fn, "arguments")),
-            },
+            ),
         )
         i = i + 1
     }
@@ -274,34 +274,34 @@ fun _parse_usage(j: JsonValue) -> Usage {
     // prompt_tokens already includes them, so this is only broken out for
     // pricing. There is no separate cache-write count.
     let cached = as_int_or(field(field(j, "prompt_tokens_details"), "cached_tokens"), 0)
-    return Usage {
+    return Usage(
         prompt_tokens: as_int_or(field(j, "prompt_tokens"), 0),
         completion_tokens: as_int_or(field(j, "completion_tokens"), 0),
         total_tokens: as_int_or(field(j, "total_tokens"), 0),
         cache_read_tokens: cached,
         cache_write_tokens: 0,
-    }
+    )
 }
 
-fun _shape_error(body: String) -> Error {
-    let head = body
+fun _shape_error(body: str) -> Error {
+    var head = body
     if body.length() > 300 {
         head = "${body.substring(0, 300)}..."
     }
-    return Error { kind: "aviary", message: "response had no choices: ${head}" }
+    return Error(kind: "aviary", message: "response had no choices: ${head}")
 }
 
 // Request headers: JSON content type, the credential in its provider's style,
 // then any extra header lines the caller added.
-fun _headers(spec: Spec, req: ChatRequest) -> String {
-    let h = "Content-Type: application/json"
+fun _headers(spec: Spec, req: ChatRequest) -> str {
+    var h = "Content-Type: application/json"
     match spec.auth {
-        Bearer -> {
+        case Bearer {
             h = "${h}\nAuthorization: Bearer ${spec.key}"
-        },
-        ApiKeyHeader -> {
+        }
+        case ApiKeyHeader {
             h = "${h}\napi-key: ${spec.key}"
-        },
+        }
     }
     if req.extra_headers != "" {
         h = "${h}\n${req.extra_headers}"

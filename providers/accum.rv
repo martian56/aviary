@@ -2,25 +2,25 @@
 // adapter: each applies its provider's events to this and hands back text
 // deltas, and the finished accumulator becomes the ChatReply.
 
-import "../message" { ToolCall }
-import "../request" { ChatReply, Usage }
+from "../message" import ToolCall
+from "../request" import ChatReply, Usage
 
-struct StreamAcc {
-    text: String,
-    model: String,
-    finish_reason: String,
-    tool_calls: List<ToolCall>,
-    prompt_tokens: Int,
-    completion_tokens: Int,
-    total_tokens: Int,
-    cache_read_tokens: Int,
-    cache_write_tokens: Int,
+class StreamAcc {
+    text: str
+    model: str
+    finish_reason: str
+    tool_calls: list[ToolCall]
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
 }
 
 impl StreamAcc {
     fun new() -> StreamAcc {
-        let calls: List<ToolCall> = []
-        return StreamAcc {
+        let calls: list[ToolCall] = []
+        return StreamAcc(
             text: "",
             model: "",
             finish_reason: "",
@@ -30,27 +30,27 @@ impl StreamAcc {
             total_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
-        }
+        )
     }
 
     fun to_reply(self) -> ChatReply {
-        let total = self.total_tokens
+        var total = self.total_tokens
         if total == 0 {
             total = self.prompt_tokens + self.completion_tokens
         }
-        return ChatReply {
+        return ChatReply(
             content: self.text,
             model: self.model,
             finish_reason: self.finish_reason,
             tool_calls: self.tool_calls,
-            usage: Usage {
+            usage: Usage(
                 prompt_tokens: self.prompt_tokens,
                 completion_tokens: self.completion_tokens,
                 total_tokens: total,
                 cache_read_tokens: self.cache_read_tokens,
                 cache_write_tokens: self.cache_write_tokens,
-            },
+            ),
             raw: "",
-        }
+        )
     }
 }

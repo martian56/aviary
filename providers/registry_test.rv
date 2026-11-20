@@ -1,12 +1,12 @@
-import std/test { assert_eq_str, assert_true, assert_false, assert_ok, assert_err }
-import "./registry" { ProviderKind, Auth, Spec, Base, base_spec, resolve, trim_base }
+from std.test import assert_eq_str, assert_true, assert_false, assert_ok, assert_err
+from "./registry" import ProviderKind, Auth, Spec, Base, base_spec, resolve, trim_base
 
-fun kind_str(k: ProviderKind) -> String {
+fun kind_str(k: ProviderKind) -> str {
     return match k {
-        OpenAI -> "openai",
-        Anthropic -> "anthropic",
-        Gemini -> "gemini",
-        Cohere -> "cohere",
+        case OpenAI { "openai" }
+        case Anthropic { "anthropic" }
+        case Gemini { "gemini" }
+        case Cohere { "cohere" }
     }
 }
 
@@ -23,11 +23,11 @@ fun test_openai_fleet_shares_the_openai_kind() {
         "openrouter",
         "sakana",
     ]
-    let i = 0
+    var i = 0
     while i < names.len() {
         match base_spec(names[i]) {
-            Ok(b) -> assert_eq_str(kind_str(b.kind), "openai"),
-            Err(e) -> assert_true(false),
+            case Ok(b) { assert_eq_str(kind_str(b.kind), "openai") }
+            case Err(e) { assert_true(false) }
         }
         i = i + 1
     }
@@ -35,40 +35,40 @@ fun test_openai_fleet_shares_the_openai_kind() {
 
 fun test_base_urls_and_key_envs() {
     match base_spec("groq") {
-        Ok(b) -> {
+        case Ok(b) {
             assert_eq_str(b.default_base, "https://api.groq.com/openai/v1")
             assert_eq_str(b.key_env, "GROQ_API_KEY")
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
     match base_spec("anthropic") {
-        Ok(b) -> {
+        case Ok(b) {
             assert_eq_str(kind_str(b.kind), "anthropic")
             assert_eq_str(b.key_env, "ANTHROPIC_API_KEY")
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
     match base_spec("sakana") {
-        Ok(b) -> {
+        case Ok(b) {
             assert_eq_str(b.default_base, "https://api.sakana.ai/v1")
             assert_eq_str(b.key_env, "SAKANA_API_KEY")
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_aliases() {
     match base_spec("grok") {
-        Ok(b) -> assert_eq_str(b.key_env, "XAI_API_KEY"),
-        Err(e) -> assert_true(false),
+        case Ok(b) { assert_eq_str(b.key_env, "XAI_API_KEY") }
+        case Err(e) { assert_true(false) }
     }
     match base_spec("claude") {
-        Ok(b) -> assert_eq_str(kind_str(b.kind), "anthropic"),
-        Err(e) -> assert_true(false),
+        case Ok(b) { assert_eq_str(kind_str(b.kind), "anthropic") }
+        case Err(e) { assert_true(false) }
     }
     match base_spec("google") {
-        Ok(b) -> assert_eq_str(kind_str(b.kind), "gemini"),
-        Err(e) -> assert_true(false),
+        case Ok(b) { assert_eq_str(kind_str(b.kind), "gemini") }
+        case Err(e) { assert_true(false) }
     }
 }
 
@@ -78,29 +78,29 @@ fun test_unknown_provider_errors() {
 
 fun test_resolve_uses_overrides() {
     match resolve("openai", "sk-test-key", "https://proxy.local/v1") {
-        Ok(s) -> {
+        case Ok(s) {
             assert_eq_str(s.key, "sk-test-key")
             assert_eq_str(s.base_url, "https://proxy.local/v1")
             assert_eq_str(kind_str(s.kind), "openai")
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_resolve_default_base_with_explicit_key() {
     match resolve("mistral", "key123", "") {
-        Ok(s) -> assert_eq_str(s.base_url, "https://api.mistral.ai/v1"),
-        Err(e) -> assert_true(false),
+        case Ok(s) { assert_eq_str(s.base_url, "https://api.mistral.ai/v1") }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_ollama_needs_no_key() {
     match resolve("ollama", "", "") {
-        Ok(s) -> {
+        case Ok(s) {
             assert_eq_str(s.base_url, "http://localhost:11434/v1")
             assert_eq_str(s.key, "")
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
@@ -108,8 +108,8 @@ fun test_custom_needs_a_base() {
     // No base override and (in a clean environment) no AVIARY_BASE_URL: the
     // custom provider cannot resolve a base and reports it.
     match resolve("custom", "k", "https://my.host/v1") {
-        Ok(s) -> assert_eq_str(s.base_url, "https://my.host/v1"),
-        Err(e) -> assert_true(false),
+        case Ok(s) { assert_eq_str(s.base_url, "https://my.host/v1") }
+        case Err(e) { assert_true(false) }
     }
 }
 

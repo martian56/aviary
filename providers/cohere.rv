@@ -2,19 +2,19 @@
 // messages array, so the request is close to the OpenAI shape; the reply
 // wraps its text in a content-block array under a top-level "message".
 
-import std/string
-import std/json { JsonValue, stringify, parse }
-import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
-import "../message" { Message, Role, role_str, ToolCall, ToolDef }
-import "../request" { ChatRequest, ChatReply, Usage }
-import "./registry" { Spec, trim_base }
-import "./transport" { post_json, open_sse }
-import std/http { HttpStream }
-import "./sse" { SseParser }
-import "./accum" { StreamAcc }
-import std/error { Error }
+import std.string
+from std.json import JsonValue, stringify, parse
+from "../jsonutil" import Obj, field, index, as_str, as_int_or, as_list
+from "../message" import Message, Role, role_str, ToolCall, ToolDef
+from "../request" import ChatRequest, ChatReply, Usage
+from "./registry" import Spec, trim_base
+from "./transport" import post_json, open_sse
+from std.http import HttpStream
+from "./sse" import SseParser
+from "./accum" import StreamAcc
+from std.error import Error
 
-fun cohere_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+fun cohere_complete(model: str, req: ChatRequest, spec: Spec) -> Result[ChatReply, Error] {
     let url = "${trim_base(spec.base_url)}/chat"
     let body = build_body(model, req)
     let headers = _headers(spec, req)
@@ -28,29 +28,29 @@ fun cohere_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatR
 // followed by tool-call-delta argument fragments, and the finish reason
 // and token counts arrive in message-end.
 fun cohere_stream(
-    model: String,
+    model: str,
     req: ChatRequest,
     spec: Spec,
-    on_text: fun(String) -> Unit,
-) -> Result<ChatReply, Error> {
+    on_text: fun(str) -> Unit,
+) -> Result[ChatReply, Error] {
     let url = "${trim_base(spec.base_url)}/chat"
     let body = build_body_with(model, req, true)
     let headers = _headers(spec, req)
     let s = open_sse(url, body, headers, req.timeout_ms, req.retries)?
     let parser = SseParser.new()
     let acc = StreamAcc.new()
-    let reading = true
+    var reading = true
     while reading {
         if req.cancel.canceled() {
             return Ok(_stream_canceled(s, acc))
         }
         match s.read_chunk() {
-            Ok(chunk) -> {
+            case Ok(chunk) {
                 if chunk.length() == 0 {
                     reading = false
                 } else {
                     let events = parser.feed(chunk)
-                    let i = 0
+                    var i = 0
                     while i < events.len() {
                         let delta = apply_stream_event(acc, events[i])
                         if delta != "" {
@@ -62,11 +62,11 @@ fun cohere_stream(
                         i = i + 1
                     }
                 }
-            },
-            Err(e) -> {
+            }
+            case Err(e) {
                 s.close()
                 return Err(e)
-            },
+            }
         }
     }
     s.close()
@@ -75,18 +75,18 @@ fun cohere_stream(
 
 // Apply one event payload to the accumulator and return the text delta it
 // carried. Pure, so tests feed event payloads directly.
-fun apply_stream_event(acc: StreamAcc, data: String) -> String {
-    let parsed = JsonValue.Null
-    let ok = true
+fun apply_stream_event(acc: StreamAcc, data: str) -> str {
+    var parsed = JsonValue.Null
+    var ok = true
     match parse(data) {
-        Ok(v) -> {
+        case Ok(v) {
             parsed = v
-        },
-        Err(e) -> {
+        }
+        case Err(e) {
             ok = false
-        },
+        }
     }
-    if !ok {
+    if not ok {
         return ""
     }
     let j = parsed
@@ -102,15 +102,15 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
     if kind == "tool-call-start" {
         let call = field(field(field(j, "delta"), "message"), "tool_calls")
         acc.tool_calls.push(
-            ToolCall {
+            ToolCall(
                 id: as_str(field(call, "id")),
                 name: as_str(field(field(call, "function"), "name")),
                 arguments: "",
-            },
+            ),
         )
         return ""
     }
-    if kind == "tool-call-delta" && acc.tool_calls.len() > 0 {
+    if kind == "tool-call-delta" and acc.tool_calls.len() > 0 {
         let call = field(field(field(j, "delta"), "message"), "tool_calls")
         let fragment = as_str(field(field(call, "function"), "arguments"))
         let last = acc.tool_calls[acc.tool_calls.len() - 1]
@@ -131,27 +131,27 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
     return ""
 }
 
-fun _headers(spec: Spec, req: ChatRequest) -> String {
-    let headers = "Content-Type: application/json\nAuthorization: Bearer ${spec.key}"
+fun _headers(spec: Spec, req: ChatRequest) -> str {
+    var headers = "Content-Type: application/json\nAuthorization: Bearer ${spec.key}"
     if req.extra_headers != "" {
         headers = "${headers}\n${req.extra_headers}"
     }
     return headers
 }
 
-fun build_body(model: String, req: ChatRequest) -> String {
+fun build_body(model: str, req: ChatRequest) -> str {
     return build_body_with(model, req, false)
 }
 
-fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String {
-    let root = Obj.new()
+fun build_body_with(model: str, req: ChatRequest, streaming: bool) -> str {
+    var root = Obj.new()
     root.str("model", model)
     if streaming {
         root = root.bool("stream", true)
     }
 
-    let msgs: List<JsonValue> = []
-    let i = 0
+    let msgs: list[JsonValue] = []
+    var i = 0
     while i < req.messages.len() {
         let m = req.messages[i]
         let role = role_str(m.role)
@@ -176,9 +176,9 @@ fun build_body_with(model: String, req: ChatRequest, streaming: Bool) -> String 
     return stringify(root.build())
 }
 
-fun _tools_json(tools: List<ToolDef>) -> JsonValue {
-    let out: List<JsonValue> = []
-    let i = 0
+fun _tools_json(tools: list[ToolDef]) -> JsonValue {
+    let out: list[JsonValue] = []
+    var i = 0
     while i < tools.len() {
         let t = tools[i]
         let fn = Obj.new().str("name", t.name).str("description", t.description).set(
@@ -191,12 +191,12 @@ fun _tools_json(tools: List<ToolDef>) -> JsonValue {
     return JsonValue.Array(out)
 }
 
-fun parse_reply(body: String) -> Result<ChatReply, Error> {
+fun parse_reply(body: str) -> Result[ChatReply, Error] {
     let j = parse(body)?
     let message = field(j, "message")
     let blocks = as_list(field(message, "content"))
-    let text = ""
-    let i = 0
+    var text = ""
+    var i = 0
     while i < blocks.len() {
         let b = blocks[i]
         if as_str(field(b, "type")) == "text" {
@@ -204,18 +204,18 @@ fun parse_reply(body: String) -> Result<ChatReply, Error> {
         }
         i = i + 1
     }
-    let calls: List<ToolCall> = []
+    let calls: list[ToolCall] = []
     let raw_calls = as_list(field(message, "tool_calls"))
-    let k = 0
+    var k = 0
     while k < raw_calls.len() {
         let c = raw_calls[k]
         let fn = field(c, "function")
         calls.push(
-            ToolCall {
+            ToolCall(
                 id: as_str(field(c, "id")),
                 name: as_str(field(fn, "name")),
                 arguments: as_str(field(fn, "arguments")),
-            },
+            ),
         )
         k = k + 1
     }
@@ -223,20 +223,20 @@ fun parse_reply(body: String) -> Result<ChatReply, Error> {
     let tokens = field(field(j, "usage"), "tokens")
     let input_tokens = as_int_or(field(tokens, "input_tokens"), 0)
     let output_tokens = as_int_or(field(tokens, "output_tokens"), 0)
-    let reply = ChatReply {
+    let reply = ChatReply(
         content: text,
         model: as_str(field(j, "model")),
         finish_reason: as_str(field(j, "finish_reason")),
         tool_calls: calls,
-        usage: Usage {
+        usage: Usage(
             prompt_tokens: input_tokens,
             completion_tokens: output_tokens,
             total_tokens: input_tokens + output_tokens,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
-        },
+        ),
         raw: body,
-    }
+    )
     return Ok(reply)
 }
 

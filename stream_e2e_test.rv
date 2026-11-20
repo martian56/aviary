@@ -5,23 +5,23 @@
 // server on its own port; deltas are recorded through a module global since
 // every test runs in a fresh process.
 
-import std/string
-import std/http { Server, Request, Response }
-import std/time { sleep_millis }
-import std/test { assert_eq_int, assert_eq_str, assert_true }
-import "./request" { ChatRequest, CancelToken }
-import "./lib" { complete, complete_stream }
+import std.string
+from std.http import Server, Request, Response
+from std.time import sleep_millis
+from std.test import assert_eq_int, assert_eq_str, assert_true
+from "./request" import ChatRequest, CancelToken
+from "./lib" import complete, complete_stream
 
-let sink: List<String> = []
-let hits = 0
+let sink: list[str] = []
+var hits = 0
 let cancel_tok: CancelToken = CancelToken.new()
 
-fun record(t: String) {
+fun record(t: str) {
     sink.push(t)
 }
 
 // Records the delta, then cancels: the stream must stop before the next one.
-fun record_and_cancel(t: String) {
+fun record_and_cancel(t: str) {
     sink.push(t)
     cancel_tok.cancel()
 }
@@ -81,51 +81,47 @@ fun settle() {
 }
 
 fun test_complete_against_local_server() {
-    spawn(fun() -> Unit {
+    spawn {
         serve_json()
-    })
+    }
     settle()
     let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
         "http://127.0.0.1:8351/v1",
     )
     match complete(req) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.content, "pong")
             assert_eq_str(r.finish_reason, "stop")
             assert_eq_int(r.usage.total_tokens, 4)
-        },
-        Err(e) -> {
-            assert_eq_str("complete failed", e.message)
-        },
+        }
+        case Err(e) { assert_eq_str("complete failed", e.message) }
     }
 }
 
 fun test_stream_against_local_server() {
-    spawn(fun() -> Unit {
+    spawn {
         serve_sse()
-    })
+    }
     settle()
     let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
         "http://127.0.0.1:8352/v1",
     )
     match complete_stream(req, record) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.content, "Hello")
             assert_eq_str(r.finish_reason, "stop")
             assert_eq_int(sink.len(), 2)
             assert_eq_str(sink[0], "Hel")
             assert_eq_str(sink[1], "lo")
-        },
-        Err(e) -> {
-            assert_eq_str("stream failed", e.message)
-        },
+        }
+        case Err(e) { assert_eq_str("stream failed", e.message) }
     }
 }
 
 fun test_precanceled_stream_stops_before_any_delta() {
-    spawn(fun() -> Unit {
+    spawn {
         serve_sse_8354()
-    })
+    }
     settle()
     let tok = CancelToken.new()
     tok.cancel()
@@ -133,55 +129,49 @@ fun test_precanceled_stream_stops_before_any_delta() {
         "http://127.0.0.1:8354/v1",
     ).cancelable(tok)
     match complete_stream(req, record) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.finish_reason, "canceled")
             assert_eq_str(r.content, "")
             assert_eq_int(sink.len(), 0)
-        },
-        Err(e) -> {
-            assert_eq_str("precanceled stream failed", e.message)
-        },
+        }
+        case Err(e) { assert_eq_str("precanceled stream failed", e.message) }
     }
 }
 
 fun test_cancel_mid_stream_keeps_the_partial_reply() {
-    spawn(fun() -> Unit {
+    spawn {
         serve_sse_8355()
-    })
+    }
     settle()
     let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
         "http://127.0.0.1:8355/v1",
     ).cancelable(cancel_tok)
     match complete_stream(req, record_and_cancel) {
-        Ok(r) -> {
+        case Ok(r) {
             // The first delta streamed, the callback canceled, and the
             // second delta never arrived.
             assert_eq_str(r.finish_reason, "canceled")
             assert_eq_str(r.content, "Hel")
             assert_eq_int(sink.len(), 1)
             assert_eq_str(sink[0], "Hel")
-        },
-        Err(e) -> {
-            assert_eq_str("mid-stream cancel failed", e.message)
-        },
+        }
+        case Err(e) { assert_eq_str("mid-stream cancel failed", e.message) }
     }
 }
 
 fun test_transient_error_is_retried() {
-    spawn(fun() -> Unit {
+    spawn {
         serve_flaky()
-    })
+    }
     settle()
     let req = ChatRequest.new("custom/local-model").user("ping").key("test").base(
         "http://127.0.0.1:8353/v1",
     ).retries(2)
     match complete(req) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.content, "pong")
             assert_true(hits >= 2)
-        },
-        Err(e) -> {
-            assert_eq_str("retry failed", e.message)
-        },
+        }
+        case Err(e) { assert_eq_str("retry failed", e.message) }
     }
 }
