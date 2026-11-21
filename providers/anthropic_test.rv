@@ -1,17 +1,17 @@
-import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
-import std/json { JsonValue, parse }
-import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
-import "../message" { Message, Role, ToolCall, ToolDef }
-import "../request" { ChatRequest, ChatReply }
-import "./anthropic" { build_body, parse_reply }
+from std.test import assert_eq_str, assert_eq_int, assert_true, assert_false
+from std.json import JsonValue, parse
+from "../jsonutil" import Obj, field, index, as_str, as_int_or, as_list
+from "../message" import Message, Role, ToolCall, ToolDef
+from "../request" import ChatRequest, ChatReply
+from "./anthropic" import build_body, parse_reply
 
-fun must_parse(s: String) -> JsonValue {
+fun must_parse(s: str) -> JsonValue {
     return match parse(s) {
-        Ok(v) -> v,
-        Err(e) -> {
+        case Ok(v) { v }
+        case Err(e) {
             assert_true(false)
             JsonValue.Null
-        },
+        }
     }
 }
 
@@ -37,7 +37,7 @@ fun test_max_tokens_honors_the_request() {
 }
 
 fun test_tool_use_is_a_content_block() {
-    let call = ToolCall { id: "tu_1", name: "get_weather", arguments: "{\"city\":\"NYC\"}" }
+    let call = ToolCall(id: "tu_1", name: "get_weather", arguments: "{\"city\":\"NYC\"}")
     let req = ChatRequest.new("anthropic/claude").user("weather?").message(
         Message.assistant_calls("let me check", [call]),
     )
@@ -109,42 +109,42 @@ fun test_no_cache_keeps_the_system_a_plain_string() {
 fun test_parse_reply_counts_cached_input_tokens() {
     let body = "{\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":5,\"output_tokens\":4}}"
     match parse_reply(body) {
-        Ok(r) -> {
+        case Ok(r) {
             // prompt_tokens is the true total input: 10 + 100 + 5.
             assert_eq_int(r.usage.prompt_tokens, 115)
             assert_eq_int(r.usage.cache_read_tokens, 100)
             assert_eq_int(r.usage.cache_write_tokens, 5)
             assert_eq_int(r.usage.completion_tokens, 4)
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_parse_text_reply() {
     let body = "{\"model\":\"claude-3-5-sonnet\",\"content\":[{\"type\":\"text\",\"text\":\"Hi there\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":10,\"output_tokens\":4}}"
     match parse_reply(body) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.content, "Hi there")
             assert_eq_str(r.finish_reason, "end_turn")
             assert_eq_int(r.usage.prompt_tokens, 10)
             assert_eq_int(r.usage.completion_tokens, 4)
             assert_eq_int(r.usage.total_tokens, 14)
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_parse_tool_use_reply() {
     let body = "{\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"checking\"},{\"type\":\"tool_use\",\"id\":\"tu_9\",\"name\":\"get_weather\",\"input\":{\"city\":\"NYC\"}}],\"stop_reason\":\"tool_use\"}"
     match parse_reply(body) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.content, "checking")
             assert_eq_str(r.finish_reason, "tool_use")
             assert_eq_int(r.tool_calls.len(), 1)
             assert_eq_str(r.tool_calls[0].id, "tu_9")
             assert_eq_str(r.tool_calls[0].name, "get_weather")
             assert_true(r.tool_calls[0].arguments.contains("NYC"))
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }

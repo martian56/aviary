@@ -1,6 +1,6 @@
-import std/string
-import std/test { assert_eq_int, assert_eq_str }
-import "./sse" { SseParser }
+import std.string
+from std.test import assert_eq_int, assert_eq_str
+from "./sse" import SseParser
 
 fun test_single_event() {
     let p = SseParser.new()

@@ -1,7 +1,7 @@
-import std/string
-import std/test { assert_eq_int, assert_eq_str, assert_true }
-import "./gemini" { apply_stream_event }
-import "./accum" { StreamAcc }
+import std.string
+from std.test import assert_eq_int, assert_eq_str, assert_true
+from "./gemini" import apply_stream_event
+from "./accum" import StreamAcc
 
 fun test_chunk_texts_accumulate() {
     let acc = StreamAcc.new()

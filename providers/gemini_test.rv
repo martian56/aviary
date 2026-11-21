@@ -1,17 +1,17 @@
-import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
-import std/json { JsonValue, parse }
-import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
-import "../message" { Message, Role, ToolCall, ToolDef }
-import "../request" { ChatRequest, ChatReply }
-import "./gemini" { build_body, parse_reply }
+from std.test import assert_eq_str, assert_eq_int, assert_true, assert_false
+from std.json import JsonValue, parse
+from "../jsonutil" import Obj, field, index, as_str, as_int_or, as_list
+from "../message" import Message, Role, ToolCall, ToolDef
+from "../request" import ChatRequest, ChatReply
+from "./gemini" import build_body, parse_reply
 
-fun must_parse(s: String) -> JsonValue {
+fun must_parse(s: str) -> JsonValue {
     return match parse(s) {
-        Ok(v) -> v,
-        Err(e) -> {
+        case Ok(v) { v }
+        case Err(e) {
             assert_true(false)
             JsonValue.Null
-        },
+        }
     }
 }
 
@@ -64,30 +64,30 @@ fun test_tools_are_function_declarations() {
 fun test_parse_text_reply() {
     let body = "{\"modelVersion\":\"gemini-1.5\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Sure.\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":6,\"candidatesTokenCount\":2,\"totalTokenCount\":8}}"
     match parse_reply(body) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_str(r.content, "Sure.")
             assert_eq_str(r.finish_reason, "STOP")
             assert_eq_int(r.usage.total_tokens, 8)
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_parse_function_call_reply() {
     let body = "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"NYC\"}}}]},\"finishReason\":\"STOP\"}]}"
     match parse_reply(body) {
-        Ok(r) -> {
+        case Ok(r) {
             assert_eq_int(r.tool_calls.len(), 1)
             assert_eq_str(r.tool_calls[0].name, "get_weather")
             assert_true(r.tool_calls[0].arguments.contains("NYC"))
-        },
-        Err(e) -> assert_true(false),
+        }
+        case Err(e) { assert_true(false) }
     }
 }
 
 fun test_parse_reply_without_candidates_errors() {
     match parse_reply("{\"error\":\"bad\"}") {
-        Ok(r) -> assert_true(false),
-        Err(e) -> assert_true(true),
+        case Ok(r) { assert_true(false) }
+        case Err(e) { assert_true(true) }
     }
 }

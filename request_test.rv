@@ -1,13 +1,13 @@
-import std/test { assert_eq_str, assert_eq_int, assert_true, assert_false }
-import "./message" { Message, Role, ToolCall }
-import "./request" { ChatRequest, ChatReply, Usage }
+from std.test import assert_eq_str, assert_eq_int, assert_true, assert_false
+from "./message" import Message, Role, ToolCall
+from "./request" import ChatRequest, ChatReply, Usage
 
-fun role_str(r: Role) -> String {
+fun role_str(r: Role) -> str {
     return match r {
-        System -> "system",
-        User -> "user",
-        Assistant -> "assistant",
-        Tool -> "tool",
+        case System { "system" }
+        case User { "user" }
+        case Assistant { "assistant" }
+        case Tool { "tool" }
     }
 }
 

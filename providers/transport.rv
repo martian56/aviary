@@ -4,48 +4,48 @@
 // anything else returns immediately. Everything above this file builds
 // strings and parses strings, so it is testable without a server.
 
-import std/string
-import std/http { request_with_timeout, stream, HttpResponse, HttpStream }
-import std/error { Error, error_kind }
-import std/time { sleep_millis }
+import std.string
+from std.http import request_with_timeout, stream, HttpResponse, HttpStream
+from std.error import Error, error_kind
+from std.time import sleep_millis
 
 // Deadline for a buffered completion when the request does not set one.
-const DEFAULT_TIMEOUT_MS: Int = 120000
+let DEFAULT_TIMEOUT_MS: int = 120000
 
 // Per-read deadline for a stream when the request does not set one.
-const DEFAULT_STREAM_TIMEOUT_MS: Int = 30000
+let DEFAULT_STREAM_TIMEOUT_MS: int = 30000
 
 // POST a JSON body and return the response body on a 2xx status. A non-2xx
 // status is an error carrying the code and a snippet of the body, which is
 // where a provider puts its own error message. Transient failures are
 // retried up to `retries` times before giving up.
 fun post_json(
-    url: String,
-    body: String,
-    headers: String,
-    timeout_ms: Int,
-    retries: Int,
-) -> Result<String, Error> {
-    let deadline = timeout_ms
+    url: str,
+    body: str,
+    headers: str,
+    timeout_ms: int,
+    retries: int,
+) -> Result[str, Error] {
+    var deadline = timeout_ms
     if deadline <= 0 {
         deadline = DEFAULT_TIMEOUT_MS
     }
-    let attempt = 0
+    var attempt = 0
     while true {
         match request_with_timeout("POST", url, body, headers, deadline) {
-            Ok(resp) -> {
-                if resp.status_code >= 200 && resp.status_code < 300 {
+            case Ok(resp) {
+                if resp.status_code >= 200 and resp.status_code < 300 {
                     return Ok(resp.body)
                 }
-                if attempt >= retries || !_transient_status(resp.status_code) {
+                if attempt >= retries or not _transient_status(resp.status_code) {
                     return Err(_status_error(url, resp))
                 }
-            },
-            Err(e) -> {
+            }
+            case Err(e) {
                 if attempt >= retries {
                     return Err(e)
                 }
-            },
+            }
         }
         sleep_millis(_backoff_ms(attempt))
         attempt = attempt + 1
@@ -58,34 +58,34 @@ fun post_json(
 // it). A non-2xx status drains the error body so the provider's message
 // survives into the error.
 fun open_sse(
-    url: String,
-    body: String,
-    headers: String,
-    timeout_ms: Int,
-    retries: Int,
-) -> Result<HttpStream, Error> {
-    let per_read = timeout_ms
+    url: str,
+    body: str,
+    headers: str,
+    timeout_ms: int,
+    retries: int,
+) -> Result[HttpStream, Error] {
+    var per_read = timeout_ms
     if per_read <= 0 {
         per_read = DEFAULT_STREAM_TIMEOUT_MS
     }
-    let attempt = 0
+    var attempt = 0
     while true {
         match stream("POST", url, body, headers, per_read) {
-            Ok(s) -> {
-                if s.status_code >= 200 && s.status_code < 300 {
+            case Ok(s) {
+                if s.status_code >= 200 and s.status_code < 300 {
                     return Ok(s)
                 }
                 let detail = _drain(s)
                 s.close()
-                if attempt >= retries || !_transient_status(s.status_code) {
+                if attempt >= retries or not _transient_status(s.status_code) {
                     return Err(error_kind("http_status", "HTTP ${s.status_code} from ${url}: ${_snippet(detail)}"))
                 }
-            },
-            Err(e) -> {
+            }
+            case Err(e) {
                 if attempt >= retries {
                     return Err(e)
                 }
-            },
+            }
         }
         sleep_millis(_backoff_ms(attempt))
         attempt = attempt + 1
@@ -94,48 +94,48 @@ fun open_sse(
 }
 
 // Statuses worth retrying: rate limits and transient server trouble.
-fun _transient_status(code: Int) -> Bool {
-    return code == 429 || code == 500 || code == 502 || code == 503 || code == 504
+fun _transient_status(code: int) -> bool {
+    return code == 429 or code == 500 or code == 502 or code == 503 or code == 504
 }
 
 // 500ms doubling per attempt, capped at 8s.
-fun _backoff_ms(attempt: Int) -> Int {
-    let ms = 500
-    let i = 0
-    while i < attempt && ms < 8000 {
+fun _backoff_ms(attempt: int) -> int {
+    var ms = 500
+    var i = 0
+    while i < attempt and ms < 8000 {
         ms = ms * 2
         i = i + 1
     }
     return ms
 }
 
-fun _status_error(url: String, resp: HttpResponse) -> Error {
+fun _status_error(url: str, resp: HttpResponse) -> Error {
     return error_kind("http_status", "HTTP ${resp.status_code} from ${url}: ${_snippet(resp.body)}")
 }
 
 // Read whatever remains of a stream's body, for error reporting.
-fun _drain(s: HttpStream) -> String {
-    let out = ""
-    let reading = true
+fun _drain(s: HttpStream) -> str {
+    var out = ""
+    var reading = true
     while reading {
         match s.read_chunk() {
-            Ok(chunk) -> {
-                if chunk.length() == 0 || out.length() > 4000 {
+            case Ok(chunk) {
+                if chunk.length() == 0 or out.length() > 4000 {
                     reading = false
                 } else {
                     out = out.concat(chunk)
                 }
-            },
-            Err(e) -> {
+            }
+            case Err(e) {
                 reading = false
-            },
+            }
         }
     }
     return out
 }
 
 // The first 400 bytes of a response body, so an error message stays readable.
-fun _snippet(body: String) -> String {
+fun _snippet(body: str) -> str {
     if body.length() <= 400 {
         return body
     }

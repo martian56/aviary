@@ -5,23 +5,23 @@
 // inside the JSON payload. Pure string work, no I/O, so tests feed chunks
 // directly.
 
-import std/string
+import std.string
 
-struct SseParser {
-    buf: String,
+class SseParser {
+    buf: str
 }
 
 impl SseParser {
     fun new() -> SseParser {
-        return SseParser { buf: "" }
+        return SseParser(buf: "")
     }
 
     // Feed one transport chunk; get back the data payloads of every event
     // completed by it, in order.
-    fun feed(self, chunk: String) -> List<String> {
+    fun feed(self, chunk: str) -> list[str] {
         self.buf = self.buf.concat(chunk)
-        let out: List<String> = []
-        let scanning = true
+        let out: list[str] = []
+        var scanning = true
         while scanning {
             let cut = _event_end(self.buf)
             if cut < 0 {
@@ -41,7 +41,7 @@ impl SseParser {
 
 // Byte offset of the first event separator (a blank line), or -1 when the
 // buffer holds no complete event yet.
-fun _event_end(buf: String) -> Int {
+fun _event_end(buf: str) -> int {
     let lf = buf.index_of("\n\n")
     let crlf = buf.index_of("\r\n\r\n")
     if lf < 0 {
@@ -58,8 +58,8 @@ fun _event_end(buf: String) -> Int {
 
 // The buffer with the event block and its separator removed. The separator
 // at `cut` is either \n\n or \r\n\r\n; look at the byte there to know.
-fun _after_separator(buf: String, cut: Int) -> String {
-    let sep = 2
+fun _after_separator(buf: str, cut: int) -> str {
+    var sep = 2
     if buf.byte_at(cut) == 13 {
         sep = 4
     }
@@ -68,14 +68,14 @@ fun _after_separator(buf: String, cut: Int) -> String {
 
 // The data payload of one event block: every `data:` line, prefix stripped,
 // joined by newline. Comments, event names, and ids are dropped.
-fun _event_data(block: String) -> String {
-    let out = ""
+fun _event_data(block: str) -> str {
+    var out = ""
     let lines = block.lines()
-    let i = 0
+    var i = 0
     while i < lines.len() {
         let line = lines[i]
         if line.starts_with("data:") {
-            let value = line.substring(5, line.length())
+            var value = line.substring(5, line.length())
             if value.starts_with(" ") {
                 value = value.substring(1, value.length())
             }

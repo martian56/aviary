@@ -3,19 +3,19 @@
 // the system prompt is "systemInstruction", and sampling options live under
 // "generationConfig". The API key rides an x-goog-api-key header.
 
-import std/string
-import std/json { JsonValue, stringify, parse }
-import "../jsonutil" { Obj, field, index, as_str, as_int_or, as_list }
-import "../message" { Message, Role, ToolCall, ToolDef }
-import "../request" { ChatRequest, ChatReply, Usage }
-import "./registry" { Spec, trim_base }
-import "./transport" { post_json, open_sse }
-import std/http { HttpStream }
-import "./sse" { SseParser }
-import "./accum" { StreamAcc }
-import std/error { Error }
+import std.string
+from std.json import JsonValue, stringify, parse
+from "../jsonutil" import Obj, field, index, as_str, as_int_or, as_list
+from "../message" import Message, Role, ToolCall, ToolDef
+from "../request" import ChatRequest, ChatReply, Usage
+from "./registry" import Spec, trim_base
+from "./transport" import post_json, open_sse
+from std.http import HttpStream
+from "./sse" import SseParser
+from "./accum" import StreamAcc
+from std.error import Error
 
-fun gemini_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatReply, Error> {
+fun gemini_complete(model: str, req: ChatRequest, spec: Spec) -> Result[ChatReply, Error] {
     let url = "${trim_base(spec.base_url)}/models/${model}:generateContent"
     let body = build_body(req)
     let headers = _headers(spec, req)
@@ -28,29 +28,29 @@ fun gemini_complete(model: String, req: ChatRequest, spec: Spec) -> Result<ChatR
 // SSE event per chunk, each a full response object whose parts carry the
 // new text.
 fun gemini_stream(
-    model: String,
+    model: str,
     req: ChatRequest,
     spec: Spec,
-    on_text: fun(String) -> Unit,
-) -> Result<ChatReply, Error> {
+    on_text: fun(str) -> Unit,
+) -> Result[ChatReply, Error] {
     let url = "${trim_base(spec.base_url)}/models/${model}:streamGenerateContent?alt=sse"
     let body = build_body(req)
     let headers = _headers(spec, req)
     let s = open_sse(url, body, headers, req.timeout_ms, req.retries)?
     let parser = SseParser.new()
     let acc = StreamAcc.new()
-    let reading = true
+    var reading = true
     while reading {
         if req.cancel.canceled() {
             return Ok(_stream_canceled(s, acc))
         }
         match s.read_chunk() {
-            Ok(chunk) -> {
+            case Ok(chunk) {
                 if chunk.length() == 0 {
                     reading = false
                 } else {
                     let events = parser.feed(chunk)
-                    let i = 0
+                    var i = 0
                     while i < events.len() {
                         let delta = apply_stream_event(acc, events[i])
                         if delta != "" {
@@ -62,11 +62,11 @@ fun gemini_stream(
                         i = i + 1
                     }
                 }
-            },
-            Err(e) -> {
+            }
+            case Err(e) {
                 s.close()
                 return Err(e)
-            },
+            }
         }
     }
     s.close()
@@ -75,18 +75,18 @@ fun gemini_stream(
 
 // Apply one streamed chunk to the accumulator and return its text delta.
 // Pure, so tests feed event payloads directly.
-fun apply_stream_event(acc: StreamAcc, data: String) -> String {
-    let parsed = JsonValue.Null
-    let ok = true
+fun apply_stream_event(acc: StreamAcc, data: str) -> str {
+    var parsed = JsonValue.Null
+    var ok = true
     match parse(data) {
-        Ok(v) -> {
+        case Ok(v) {
             parsed = v
-        },
-        Err(e) -> {
+        }
+        case Err(e) {
             ok = false
-        },
+        }
     }
-    if !ok {
+    if not ok {
         return ""
     }
     let j = parsed
@@ -95,7 +95,7 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
         acc.model = m
     }
     let usage = field(j, "usageMetadata")
-    if !usage.is_null() {
+    if not usage.is_null() {
         acc.prompt_tokens = as_int_or(field(usage, "promptTokenCount"), acc.prompt_tokens)
         acc.completion_tokens = as_int_or(field(usage, "candidatesTokenCount"), acc.completion_tokens)
         acc.total_tokens = as_int_or(field(usage, "totalTokenCount"), acc.total_tokens)
@@ -110,8 +110,8 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
         acc.finish_reason = finish
     }
     let parts = as_list(field(field(cand, "content"), "parts"))
-    let delta = ""
-    let i = 0
+    var delta = ""
+    var i = 0
     while i < parts.len() {
         let p = parts[i]
         let text = as_str(field(p, "text"))
@@ -119,13 +119,13 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
             delta = "${delta}${text}"
         }
         let call = field(p, "functionCall")
-        if !call.is_null() {
+        if not call.is_null() {
             acc.tool_calls.push(
-                ToolCall {
+                ToolCall(
                     id: "",
                     name: as_str(field(call, "name")),
                     arguments: stringify(field(call, "args")),
-                },
+                ),
             )
         }
         i = i + 1
@@ -136,51 +136,47 @@ fun apply_stream_event(acc: StreamAcc, data: String) -> String {
     return delta
 }
 
-fun _headers(spec: Spec, req: ChatRequest) -> String {
-    let headers = "Content-Type: application/json\nx-goog-api-key: ${spec.key}"
+fun _headers(spec: Spec, req: ChatRequest) -> str {
+    var headers = "Content-Type: application/json\nx-goog-api-key: ${spec.key}"
     if req.extra_headers != "" {
         headers = "${headers}\n${req.extra_headers}"
     }
     return headers
 }
 
-fun build_body(req: ChatRequest) -> String {
-    let root = Obj.new()
-    let system = ""
-    let contents: List<JsonValue> = []
-    let i = 0
+fun build_body(req: ChatRequest) -> str {
+    var root = Obj.new()
+    var system = ""
+    let contents: list[JsonValue] = []
+    var i = 0
     while i < req.messages.len() {
         let m = req.messages[i]
         match m.role {
-            System -> {
+            case System {
                 if system == "" {
                     system = m.content
                 } else {
                     system = "${system}\n${m.content}"
                 }
-            },
-            User -> {
-                contents.push(_content("user", m.content))
-            },
-            Assistant -> {
-                contents.push(_content("model", m.content))
-            },
-            Tool -> {
+            }
+            case User { contents.push(_content("user", m.content)) }
+            case Assistant { contents.push(_content("model", m.content)) }
+            case Tool {
                 // A tool result is fed back as a user turn; Gemini's native
                 // functionResponse shape is not modeled in this release.
                 contents.push(_content("user", m.content))
-            },
+            }
         }
         i = i + 1
     }
     if system != "" {
-        let parts: List<JsonValue> = [Obj.new().str("text", system).build()]
+        let parts: list[JsonValue] = [Obj.new().str("text", system).build()]
         root = root.set("systemInstruction", Obj.new().set("parts", JsonValue.Array(parts)).build())
     }
     root.set("contents", JsonValue.Array(contents))
 
-    let gen = Obj.new()
-    let set_gen = false
+    var gen = Obj.new()
+    var set_gen = false
     if req.temperature >= 0.0 {
         gen = gen.float("temperature", req.temperature)
         set_gen = true
@@ -202,14 +198,14 @@ fun build_body(req: ChatRequest) -> String {
     return stringify(root.build())
 }
 
-fun _content(role: String, text: String) -> JsonValue {
-    let parts: List<JsonValue> = [Obj.new().str("text", text).build()]
+fun _content(role: str, text: str) -> JsonValue {
+    let parts: list[JsonValue] = [Obj.new().str("text", text).build()]
     return Obj.new().str("role", role).set("parts", JsonValue.Array(parts)).build()
 }
 
-fun _tools_json(tools: List<ToolDef>) -> JsonValue {
-    let decls: List<JsonValue> = []
-    let i = 0
+fun _tools_json(tools: list[ToolDef]) -> JsonValue {
+    let decls: list[JsonValue] = []
+    var i = 0
     while i < tools.len() {
         let t = tools[i]
         decls.push(
@@ -220,25 +216,23 @@ fun _tools_json(tools: List<ToolDef>) -> JsonValue {
         )
         i = i + 1
     }
-    let one: List<JsonValue> = [
+    let one: list[JsonValue] = [
         Obj.new().set("functionDeclarations", JsonValue.Array(decls)).build(),
     ]
     return JsonValue.Array(one)
 }
 
-fun parse_reply(body: String) -> Result<ChatReply, Error> {
+fun parse_reply(body: str) -> Result[ChatReply, Error] {
     let j = parse(body)?
     let candidates = as_list(field(j, "candidates"))
     if candidates.len() == 0 {
-        return Err(
-            Error { kind: "aviary", message: "gemini response had no candidates: ${_head(body)}" },
-        )
+        return Err(Error(kind: "aviary", message: "gemini response had no candidates: ${_head(body)}"))
     }
     let cand = candidates[0]
     let parts = as_list(field(field(cand, "content"), "parts"))
-    let text = ""
-    let calls: List<ToolCall> = []
-    let i = 0
+    var text = ""
+    let calls: list[ToolCall] = []
+    var i = 0
     while i < parts.len() {
         let p = parts[i]
         let t = as_str(field(p, "text"))
@@ -246,36 +240,36 @@ fun parse_reply(body: String) -> Result<ChatReply, Error> {
             text = "${text}${t}"
         }
         let call = field(p, "functionCall")
-        if !call.is_null() {
+        if not call.is_null() {
             calls.push(
-                ToolCall {
+                ToolCall(
                     id: "",
                     name: as_str(field(call, "name")),
                     arguments: stringify(field(call, "args")),
-                },
+                ),
             )
         }
         i = i + 1
     }
     let usage = field(j, "usageMetadata")
-    let reply = ChatReply {
+    let reply = ChatReply(
         content: text,
         model: as_str(field(j, "modelVersion")),
         finish_reason: as_str(field(cand, "finishReason")),
         tool_calls: calls,
-        usage: Usage {
+        usage: Usage(
             prompt_tokens: as_int_or(field(usage, "promptTokenCount"), 0),
             completion_tokens: as_int_or(field(usage, "candidatesTokenCount"), 0),
             total_tokens: as_int_or(field(usage, "totalTokenCount"), 0),
             cache_read_tokens: as_int_or(field(usage, "cachedContentTokenCount"), 0),
             cache_write_tokens: 0,
-        },
+        ),
         raw: body,
-    }
+    )
     return Ok(reply)
 }
 
-fun _head(body: String) -> String {
+fun _head(body: str) -> str {
     if body.length() > 300 {
         return "${body.substring(0, 300)}..."
     }

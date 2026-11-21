@@ -3,8 +3,8 @@
 // shape, so they share the OpenAI kind and differ only by base URL and key;
 // Anthropic, Gemini, and Cohere have their own kinds and adapters.
 
-import std/env { get_env, has_env }
-import std/error { Error, error }
+from std.env import get_env, has_env
+from std.error import Error, error
 
 // Which adapter handles a provider.
 enum ProviderKind {
@@ -22,32 +22,32 @@ enum Auth {
 }
 
 // A provider's static entry, before the key and any override are resolved.
-struct Base {
-    kind: ProviderKind,
+class Base {
+    kind: ProviderKind
     // Default endpoint root. The adapter appends its path (for example
     // "/chat/completions").
-    default_base: String,
+    default_base: str
     // Environment variable that overrides the base URL, or "" for none.
     // Used by self-hosted or resource-scoped providers (Ollama, Azure).
-    base_env: String,
+    base_env: str
     // Environment variable holding the API key.
-    key_env: String,
-    auth: Auth,
+    key_env: str
+    auth: Auth
     // False for a keyless provider such as a local Ollama server.
-    needs_key: Bool,
+    needs_key: bool
 }
 
 // A resolved provider: everything an adapter needs to make the call.
-struct Spec {
-    kind: ProviderKind,
-    base_url: String,
-    key: String,
-    key_env: String,
-    auth: Auth,
+class Spec {
+    kind: ProviderKind
+    base_url: str
+    key: str
+    key_env: str
+    auth: Auth
 }
 
 // The static entry for a provider name, or an error listing the known names.
-fun base_spec(provider: String) -> Result<Base, Error> {
+fun base_spec(provider: str) -> Result[Base, Error] {
     // OpenAI and the OpenAI-compatible fleet.
     if provider == "openai" {
         return Ok(_openai("https://api.openai.com/v1", "OPENAI_API_KEY"))
@@ -61,7 +61,7 @@ fun base_spec(provider: String) -> Result<Base, Error> {
     if provider == "deepseek" {
         return Ok(_openai("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"))
     }
-    if provider == "xai" || provider == "grok" {
+    if provider == "xai" or provider == "grok" {
         return Ok(_openai("https://api.x.ai/v1", "XAI_API_KEY"))
     }
     if provider == "together" {
@@ -92,28 +92,28 @@ fun base_spec(provider: String) -> Result<Base, Error> {
         // Local, keyless. OLLAMA_HOST may point elsewhere; the adapter appends
         // the OpenAI-compatible path.
         return Ok(
-            Base {
+            Base(
                 kind: ProviderKind.OpenAI,
                 default_base: "http://localhost:11434/v1",
                 base_env: "OLLAMA_HOST",
                 key_env: "",
                 auth: Auth.Bearer,
                 needs_key: false,
-            },
+            ),
         )
     }
     if provider == "azure" {
         // Resource-scoped: AZURE_API_BASE gives the endpoint root, the model
         // is the deployment name, and the key rides an api-key header.
         return Ok(
-            Base {
+            Base(
                 kind: ProviderKind.OpenAI,
                 default_base: "",
                 base_env: "AZURE_API_BASE",
                 key_env: "AZURE_API_KEY",
                 auth: Auth.ApiKeyHeader,
                 needs_key: true,
-            },
+            ),
         )
     }
     if provider == "custom" {
@@ -121,52 +121,52 @@ fun base_spec(provider: String) -> Result<Base, Error> {
         // on the request or AVIARY_BASE_URL, and the key with .key(...) or
         // AVIARY_API_KEY.
         return Ok(
-            Base {
+            Base(
                 kind: ProviderKind.OpenAI,
                 default_base: "",
                 base_env: "AVIARY_BASE_URL",
                 key_env: "AVIARY_API_KEY",
                 auth: Auth.Bearer,
                 needs_key: false,
-            },
+            ),
         )
     }
 
     // Native adapters.
-    if provider == "anthropic" || provider == "claude" {
+    if provider == "anthropic" or provider == "claude" {
         return Ok(
-            Base {
+            Base(
                 kind: ProviderKind.Anthropic,
                 default_base: "https://api.anthropic.com/v1",
                 base_env: "",
                 key_env: "ANTHROPIC_API_KEY",
                 auth: Auth.ApiKeyHeader,
                 needs_key: true,
-            },
+            ),
         )
     }
-    if provider == "gemini" || provider == "google" {
+    if provider == "gemini" or provider == "google" {
         return Ok(
-            Base {
+            Base(
                 kind: ProviderKind.Gemini,
                 default_base: "https://generativelanguage.googleapis.com/v1beta",
                 base_env: "",
                 key_env: "GEMINI_API_KEY",
                 auth: Auth.ApiKeyHeader,
                 needs_key: true,
-            },
+            ),
         )
     }
     if provider == "cohere" {
         return Ok(
-            Base {
+            Base(
                 kind: ProviderKind.Cohere,
                 default_base: "https://api.cohere.com/v2",
                 base_env: "",
                 key_env: "COHERE_API_KEY",
                 auth: Auth.Bearer,
                 needs_key: true,
-            },
+            ),
         )
     }
 
@@ -177,25 +177,25 @@ fun base_spec(provider: String) -> Result<Base, Error> {
     )
 }
 
-fun _openai(base: String, key_env: String) -> Base {
-    return Base {
+fun _openai(base: str, key_env: str) -> Base {
+    return Base(
         kind: ProviderKind.OpenAI,
         default_base: base,
         base_env: "",
-        key_env,
+        key_env: key_env,
         auth: Auth.Bearer,
         needs_key: true,
-    }
+    )
 }
 
 // Resolve a provider into a Spec, applying the request's key and base
 // overrides and then the environment. Errors when a required key is missing
 // or an override-only base is unset.
-fun resolve(provider: String, override_key: String, override_base: String) -> Result<Spec, Error> {
+fun resolve(provider: str, override_key: str, override_base: str) -> Result[Spec, Error] {
     let b = base_spec(provider)?
 
-    let base = override_base
-    if base == "" && b.base_env != "" && has_env(b.base_env) {
+    var base = override_base
+    if base == "" and b.base_env != "" and has_env(b.base_env) {
         base = get_env(b.base_env)
     }
     if base == "" {
@@ -209,11 +209,11 @@ fun resolve(provider: String, override_key: String, override_base: String) -> Re
         )
     }
 
-    let key = override_key
-    if key == "" && b.key_env != "" {
+    var key = override_key
+    if key == "" and b.key_env != "" {
         key = get_env(b.key_env)
     }
-    if b.needs_key && key == "" {
+    if b.needs_key and key == "" {
         return Err(
             error(
                 "provider '${provider}' needs an API key; set it with .key(...) or the ${b.key_env} environment variable",
@@ -221,11 +221,11 @@ fun resolve(provider: String, override_key: String, override_base: String) -> Re
         )
     }
 
-    return Ok(Spec { kind: b.kind, base_url: base, key, key_env: b.key_env, auth: b.auth })
+    return Ok(Spec(kind: b.kind, base_url: base, key: key, key_env: b.key_env, auth: b.auth))
 }
 
 // Strip a trailing slash so a path can be appended cleanly.
-fun trim_base(base: String) -> String {
+fun trim_base(base: str) -> str {
     if base.ends_with("/") {
         return base.substring(0, base.length() - 1)
     }

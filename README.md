@@ -7,18 +7,18 @@ One chat-completion API across many LLM providers, for
 neutral request and reply; switch providers by changing the model string.
 
 ```rust
-import "github.com/martian56/aviary" { complete }
-import "github.com/martian56/aviary/request" { ChatRequest }
+from "github.com/martian56/aviary" import complete
+from "github.com/martian56/aviary/request" import ChatRequest
 
 fun main() {
     let reply = complete(
-        ChatRequest.new("openai/gpt-4o-mini")
-            .system("You are terse.")
-            .user("Name three members of the crow family.")
+        ChatRequest.new("openai/gpt-4o-mini").system("You are terse.").user(
+            "Name three members of the crow family.",
+        ),
     )
     match reply {
-        Ok(r) -> print(r.content),
-        Err(e) -> print("error: ${e.message}"),
+        case Ok(r) { print(r.content) }
+        case Err(e) { print("error: ${e.message}") }
     }
 }
 ```
@@ -40,7 +40,7 @@ complete(ChatRequest.new("ollama/llama3").user("..."))
 ## Install
 
 ```
-rvpm add github.com/martian56/aviary@v0.3.1
+rvpm add github.com/martian56/aviary@v0.5.0
 ```
 
 No native dependencies; aviary is pure Raven over `std/http` and `std/json`.
@@ -135,23 +135,23 @@ rate and cache writes at a small premium.
 A one-liner when you just want text (no type imports needed):
 
 ```rust
-import "github.com/martian56/aviary" { ask }
+from "github.com/martian56/aviary" import ask
 match ask("openai/gpt-4o-mini", "Say hi.") {
-    Ok(text) -> print(text),
-    Err(e) -> print(e.message),
+    case Ok(text) { print(text) }
+    case Err(e) { print(e.message) }
 }
 ```
 
 ## The reply
 
 ```rust
-struct ChatReply {
-    content: String,        // the text
-    model: String,          // the model the provider reported
-    finish_reason: String,  // "stop", "tool_calls", "end_turn", ...
-    tool_calls: List<ToolCall>,
-    usage: Usage,           // prompt/completion/total tokens, plus cache_read/write
-    raw: String,            // the provider's untouched JSON, for anything else
+class ChatReply {
+    content: str // the text
+    model: str // the model the provider reported
+    finish_reason: str // "stop", "tool_calls", "end_turn", ...
+    tool_calls: list[ToolCall]
+    usage: Usage // prompt/completion/total tokens, plus cache_read/write
+    raw: str // the provider's untouched JSON, for anything else
 }
 ```
 
@@ -162,10 +162,10 @@ each text delta the moment it arrives, and the assembled `ChatReply` comes
 back at the end. Works on every provider aviary supports.
 
 ```rust
-import "github.com/martian56/aviary" { complete_stream }
-import "github.com/martian56/aviary/request" { ChatRequest }
+from "github.com/martian56/aviary" import complete_stream
+from "github.com/martian56/aviary/request" import ChatRequest
 
-fun show(delta: String) {
+fun show(delta: str) {
     print(delta)
 }
 
@@ -189,7 +189,7 @@ A stream can be stopped mid-reply. Attach a `CancelToken` to the request
 and cancel it from any goroutine (an Esc handler, a timeout watchdog):
 
 ```rust
-import "github.com/martian56/aviary/request" { ChatRequest, CancelToken }
+from "github.com/martian56/aviary/request" import ChatRequest, CancelToken
 
 let tok = CancelToken.new()
 let req = ChatRequest.new("openai/gpt-5.5").user("...").cancelable(tok)
@@ -208,18 +208,18 @@ times out.
 Declare tools with a JSON Schema for the arguments, then feed results back:
 
 ```rust
-import "github.com/martian56/aviary" { complete }
-import "github.com/martian56/aviary/request" { ChatRequest }
-import "github.com/martian56/aviary/message" { Message, ToolDef }
-import "github.com/martian56/aviary/jsonutil" { Obj }
+from "github.com/martian56/aviary" import complete
+from "github.com/martian56/aviary/request" import ChatRequest
+from "github.com/martian56/aviary/message" import Message, ToolDef
+from "github.com/martian56/aviary/jsonutil" import Obj
 
 let weather = ToolDef.new(
     "get_weather",
     "Look up the current weather for a city.",
-    Obj.new()
-        .str("type", "object")
-        .set("properties", Obj.new().set("city", Obj.new().str("type", "string").build()).build())
-        .build()
+    Obj.new().str("type", "object").set(
+        "properties",
+        Obj.new().set("city", Obj.new().str("type", "string").build()).build(),
+    ).build(),
 )
 
 let first = complete(ChatRequest.new("openai/gpt-4o").user("Weather in Baku?").tool(weather))

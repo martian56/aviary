@@ -4,68 +4,68 @@
 // wrong-typed value as absent rather than an error, so a provider that omits
 // an optional field does not break parsing.
 
-import std/collections
-import std/json { JsonValue }
+import std.collections
+from std.json import JsonValue
 
-// The runtime's Int to Float conversion. JSON numbers are Floats in
-// std/json, and a whole-number Float renders without a decimal point, so an
-// Int field such as max_tokens serializes as an integer.
+// The runtime's int to float conversion. JSON numbers are Floats in
+// std/json, and a whole-number float renders without a decimal point, so an
+// int field such as max_tokens serializes as an integer.
 extern "C" {
-    fun raven_int_to_float(x: Int) -> Float
+    fun raven_int_to_float(x: int) -> float
 }
 
-fun jstr(s: String) -> JsonValue {
+fun jstr(s: str) -> JsonValue {
     return JsonValue.Str(s)
 }
 
-fun jint(n: Int) -> JsonValue {
+fun jint(n: int) -> JsonValue {
     return JsonValue.Number(raven_int_to_float(n))
 }
 
-fun jfloat(f: Float) -> JsonValue {
+fun jfloat(f: float) -> JsonValue {
     return JsonValue.Number(f)
 }
 
-fun jbool(b: Bool) -> JsonValue {
+fun jbool(b: bool) -> JsonValue {
     return JsonValue.Bool(b)
 }
 
-fun jarr(items: List<JsonValue>) -> JsonValue {
+fun jarr(items: list[JsonValue]) -> JsonValue {
     return JsonValue.Array(items)
 }
 
 // A JSON object under construction. Each setter returns self so a body can
 // be built in one chain.
-struct Obj {
-    map: Map<String, JsonValue>,
+class Obj {
+    map: dict[str, JsonValue]
 }
 
 impl Obj {
     fun new() -> Obj {
-        return Obj { map: Map.new() }
+        return Obj(map: Map.new())
     }
 
-    fun set(self, key: String, value: JsonValue) -> Obj {
+    fun set(self, key: str, value: JsonValue) -> Obj {
         self.map.set(key, value)
         return self
     }
 
-    fun str(self, key: String, value: String) -> Obj {
+    fun str(self, key: str, value: str) -> Obj {
         self.map.set(key, JsonValue.Str(value))
         return self
     }
 
-    fun int(self, key: String, value: Int) -> Obj {
+    fun int(self, key: str, value: int) -> Obj {
         self.map.set(key, jint(value))
         return self
     }
 
-    fun float(self, key: String, value: Float) -> Obj {
+    fun float(self, key: str, value: float) -> Obj {
         self.map.set(key, JsonValue.Number(value))
         return self
     }
 
-    fun bool(self, key: String, value: Bool) -> Obj {
+    fun bool(self, key: str, value: bool) -> Obj {
         self.map.set(key, JsonValue.Bool(value))
         return self
     }
@@ -76,47 +76,47 @@ impl Obj {
 }
 
 // The value at object key `key`, or Null when absent or not an object.
-fun field(j: JsonValue, key: String) -> JsonValue {
+fun field(j: JsonValue, key: str) -> JsonValue {
     return match j.get(key) {
-        Some(v) -> v,
-        None -> JsonValue.Null,
+        case Some(v) { v }
+        case None { JsonValue.Null }
     }
 }
 
 // The value at array index `i`, or Null when absent or not an array.
-fun index(j: JsonValue, i: Int) -> JsonValue {
+fun index(j: JsonValue, i: int) -> JsonValue {
     return match j.at(i) {
-        Some(v) -> v,
-        None -> JsonValue.Null,
+        case Some(v) { v }
+        case None { JsonValue.Null }
     }
 }
 
 // `j` as a string, or "" when it is not one.
-fun as_str(j: JsonValue) -> String {
+fun as_str(j: JsonValue) -> str {
     return match j.as_string() {
-        Some(s) -> s,
-        None -> "",
+        case Some(s) { s }
+        case None { "" }
     }
 }
 
-// `j` as an Int, or `default` when it is not a number.
-fun as_int_or(j: JsonValue, default: Int) -> Int {
+// `j` as an int, or `default` when it is not a number.
+fun as_int_or(j: JsonValue, default: int) -> int {
     return match j.as_int() {
-        Some(n) -> n,
-        None -> default,
+        case Some(n) { n }
+        case None { default }
     }
 }
 
 // `j` as a list, or an empty list when it is not an array.
-fun as_list(j: JsonValue) -> List<JsonValue> {
-    let empty: List<JsonValue> = []
+fun as_list(j: JsonValue) -> list[JsonValue] {
+    let empty: list[JsonValue] = []
     return match j {
-        Array(items) -> items,
-        _ -> empty,
+        case Array(items) { items }
+        case _ { empty }
     }
 }
 
 // True when `j` is JSON null or absent.
-fun is_null(j: JsonValue) -> Bool {
+fun is_null(j: JsonValue) -> bool {
     return j.is_null()
 }
