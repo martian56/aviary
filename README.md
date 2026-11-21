@@ -40,7 +40,7 @@ complete(ChatRequest.new("ollama/llama3").user("..."))
 ## Install
 
 ```
-rvpm add github.com/martian56/aviary@v0.3.1
+rvpm add github.com/martian56/aviary@v0.5.0
 ```
 
 No native dependencies; aviary is pure Raven over `std/http` and `std/json`.
