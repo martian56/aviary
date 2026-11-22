@@ -43,9 +43,8 @@ complete(ChatRequest.new("ollama/llama3").user("..."))
 rvpm add github.com/martian56/aviary@v0.5.0
 ```
 
-No native dependencies; aviary is pure Raven over `std/http` and `std/json`.
-Streaming and per-request timeouts use `std/http` APIs added in Raven
-2.21.0, so build with that toolchain or newer.
+No native dependencies; aviary is pure Raven over `std.http` and `std.json`,
+and needs Raven 3.0.0 or newer.
 
 ## The model string
 
